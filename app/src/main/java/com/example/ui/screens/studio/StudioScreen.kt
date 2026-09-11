@@ -263,7 +263,6 @@ fun PodcastClipStudioContent(viewModel: AutoPostViewModel) {
     val activeHighlight = highlights.getOrNull(selectedIndex)
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        // --- YouTube URL / Topic Input Bar ---
         Card(
             shape = RoundedCornerShape(14.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
@@ -294,7 +293,6 @@ fun PodcastClipStudioContent(viewModel: AutoPostViewModel) {
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                // Quick Picks presets
                 Text("Pilihan Cepat Podcast Trending:", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     SuggestionChip(
@@ -320,7 +318,6 @@ fun PodcastClipStudioContent(viewModel: AutoPostViewModel) {
                     )
                 }
 
-                // Action: Download Audio & Full Transcribe
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -357,7 +354,6 @@ fun PodcastClipStudioContent(viewModel: AutoPostViewModel) {
             }
         }
 
-        // --- 9:16 Vertical Video Frame Simulator ---
         Text("Preview 9:16 Shorts/Reels/TikTok Clip:", fontSize = 14.sp, fontWeight = FontWeight.Bold)
 
         Box(
@@ -373,7 +369,6 @@ fun PodcastClipStudioContent(viewModel: AutoPostViewModel) {
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.SpaceBetween
             ) {
-                // Top Attribution Banner (Channel & Title)
                 Surface(
                     shape = RoundedCornerShape(10.dp),
                     color = Color.Black.copy(alpha = 0.6f)
@@ -397,13 +392,11 @@ fun PodcastClipStudioContent(viewModel: AutoPostViewModel) {
                     }
                 }
 
-                // Center: Animated Audio Waveform & Viral Hook Overlay
                 Column(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    // Hook Banner
                     Surface(
                         shape = RoundedCornerShape(12.dp),
                         color = YouTubeRed.copy(alpha = 0.9f)
@@ -418,7 +411,6 @@ fun PodcastClipStudioContent(viewModel: AutoPostViewModel) {
                         )
                     }
 
-                    // Simulated Live Waveform
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                         verticalAlignment = Alignment.CenterVertically
@@ -447,7 +439,6 @@ fun PodcastClipStudioContent(viewModel: AutoPostViewModel) {
                     }
                 }
 
-                // Bottom: Auto-Subtitles Banner
                 Surface(
                     shape = RoundedCornerShape(10.dp),
                     color = Color.Black.copy(alpha = 0.8f),
@@ -472,7 +463,6 @@ fun PodcastClipStudioContent(viewModel: AutoPostViewModel) {
             }
         }
 
-        // --- Video Clip Cutting & Slider Tool ---
         Card(
             shape = RoundedCornerShape(12.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
@@ -544,7 +534,6 @@ fun PodcastClipStudioContent(viewModel: AutoPostViewModel) {
             }
         }
 
-        // --- Gemini AI Identified Highlights List ---
         Text(
             text = "Klip Potongan Viral Pilihan AI (${highlights.size} Segmen):",
             fontSize = 14.sp,
@@ -607,3 +596,622 @@ fun PodcastClipStudioContent(viewModel: AutoPostViewModel) {
                                 Text(text = hl.durationFormatted, fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
                             }
                             Text(text = "Hook: ${hl.hook}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface)
+                            Text(text = "Potensi Viral: ${hl.reasonWhyViral}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showFullTranscriptDialog) {
+        AlertDialog(
+            onDismissRequest = { showFullTranscriptDialog = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Subject, contentDescription = null, tint = UtilityBlue400)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Naskah Transkripsi Full", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                }
+            },
+            text = {
+                LazyColumn(modifier = Modifier.heightIn(max = 350.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    item {
+                        Text(
+                            text = fullTranscript,
+                            fontSize = 13.sp,
+                            lineHeight = 20.sp,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = { showFullTranscriptDialog = false }) {
+                    Text("Tutup")
+                }
+            }
+        )
+    }
+}
+
+// ==========================================
+// 4d. BUAT VIDEO AI (VEO 3.1 FAST) COMPONENT
+// ==========================================
+@Composable
+fun AiVideoStudioContent(viewModel: AutoPostViewModel) {
+    val prompt by viewModel.aiVideoPrompt.collectAsState()
+    val aspectRatio by viewModel.aiVideoAspectRatio.collectAsState()
+    val style by viewModel.aiVideoStyle.collectAsState()
+    val durationSeconds by viewModel.aiVideoDurationSeconds.collectAsState()
+    val isGenerating by viewModel.isGeneratingAiVideo.collectAsState()
+    val generatedVideo by viewModel.generatedVideoResult.collectAsState()
+
+    val title by viewModel.studioContentTitle.collectAsState()
+
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Text("Preview Video AI Generator (Veo 3.1):", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+
+        val isVertical = aspectRatio == "9:16"
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(if (isVertical) 380.dp else 220.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(
+                    Brush.verticalGradient(
+                        when (style) {
+                            "Cyberpunk / Neon" -> listOf(Color(0xFF0D0221), Color(0xFF0F084B), Color(0xFF26408B))
+                            "Cinematic 4K" -> listOf(Color(0xFF0B0F19), Color(0xFF1E293B), Color(0xFF0F172A))
+                            "3D Animation / CGI" -> listOf(Color(0xFF1E1B4B), Color(0xFF4338CA), Color(0xFF312E81))
+                            else -> listOf(Slate900, Slate800, Color(0xFF020617))
+                        }
+                    )
+                )
+                .border(2.dp, if (generatedVideo != null) UtilityBlue400 else Slate700, RoundedCornerShape(16.dp))
+                .padding(16.dp)
+        ) {
+            Column(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(20.dp),
+                        color = UtilityBlue400.copy(alpha = 0.25f)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = UtilityBlue400, modifier = Modifier.size(12.dp))
+                            Text("Veo 3.1 Fast", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = UtilityBlue400)
+                        }
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(20.dp),
+                        color = Color.Black.copy(alpha = 0.6f)
+                    ) {
+                        Text(
+                            text = "$aspectRatio - ${durationSeconds}s",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
+                }
+
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    if (isGenerating) {
+                        CircularProgressIndicator(color = UtilityBlue400, strokeWidth = 3.dp, modifier = Modifier.size(48.dp))
+                        Text(
+                            text = "Model veo-3.1-fast sedang merender video AI...",
+                            fontSize = 12.sp,
+                            color = Color.White,
+                            textAlign = TextAlign.Center
+                        )
+                    } else if (generatedVideo != null) {
+                        Surface(
+                            shape = CircleShape,
+                            color = UtilityBlue400,
+                            modifier = Modifier.size(54.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(Icons.Default.PlayArrow, contentDescription = "Play", tint = Color.White, modifier = Modifier.size(32.dp))
+                            }
+                        }
+                        Text(
+                            text = generatedVideo?.stylePreset ?: "Video Siap Ditayangkan",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    } else {
+                        Surface(
+                            shape = CircleShape,
+                            color = Color.White.copy(alpha = 0.15f),
+                            modifier = Modifier.size(54.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(Icons.Default.MovieFilter, contentDescription = null, tint = Color.White, modifier = Modifier.size(30.dp))
+                            }
+                        }
+                        Text(
+                            text = "Tulis Prompt di Bawah & Klik Generate Video",
+                            fontSize = 12.sp,
+                            color = Color.White.copy(alpha = 0.8f),
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = Color.Black.copy(alpha = 0.7f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = prompt.ifBlank { "Prompt: Visual sinematik modern..." },
+                        fontSize = 11.sp,
+                        color = Color.White.copy(alpha = 0.9f),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(8.dp)
+                    )
+                }
+            }
+        }
+
+        Card(
+            shape = RoundedCornerShape(14.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text("Deskripsi Video / Prompt Teks (Veo 3.1):", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+
+                OutlinedTextField(
+                    value = prompt,
+                    onValueChange = { viewModel.setAiVideoPrompt(it) },
+                    label = { Text("Prompt Generator Video") },
+                    placeholder = { Text("mis. Drone sinematik di atas gedung futuristic kota Jakarta malam hari dengan lampu neon, 4K...") },
+                    minLines = 3,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Text("Inspirasi Prompt Cepat:", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    SuggestionChip(
+                        onClick = { viewModel.setAiVideoPrompt("Cinematic drone shot of futuristic glowing AI tech workspace, hyperrealistic 4K, soft volumetric lighting") },
+                        label = { Text("Tech 4K", fontSize = 11.sp) }
+                    )
+                    SuggestionChip(
+                        onClick = { viewModel.setAiVideoPrompt("Dynamic POV running through colorful cyberpunk Tokyo street in the rain with neon reflection") },
+                        label = { Text("Cyberpunk", fontSize = 11.sp) }
+                    )
+                    SuggestionChip(
+                        onClick = { viewModel.setAiVideoPrompt("Minimalist luxury product showcase rotating smoothly on stone pedestal with water ripples") },
+                        label = { Text("Luxury Product", fontSize = 11.sp) }
+                    )
+                }
+            }
+        }
+
+        Card(
+            shape = RoundedCornerShape(14.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text("Pengaturan Rasio & Style Video:", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+
+                Text("Rasio Format:", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = aspectRatio == "9:16",
+                        onClick = { viewModel.setAiVideoAspectRatio("9:16") },
+                        label = { Text("9:16 (Shorts/TikTok/Reels)") }
+                    )
+                    FilterChip(
+                        selected = aspectRatio == "16:9",
+                        onClick = { viewModel.setAiVideoAspectRatio("16:9") },
+                        label = { Text("16:9 (Landscape/YouTube)") }
+                    )
+                }
+
+                Text("Gaya Sinematik / Visual Preset:", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                val styles = listOf("Cinematic 4K", "Cyberpunk / Neon", "Photorealistic Studio", "3D Animation / CGI", "Minimal Aesthetic")
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(styles) { s ->
+                        FilterChip(
+                            selected = style == s,
+                            onClick = { viewModel.setAiVideoStyle(s) },
+                            label = { Text(s, fontSize = 11.sp) }
+                        )
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Durasi Video:", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        FilterChip(selected = durationSeconds == 5, onClick = { viewModel.setAiVideoDurationSeconds(5) }, label = { Text("5 Detik") })
+                        FilterChip(selected = durationSeconds == 10, onClick = { viewModel.setAiVideoDurationSeconds(10) }, label = { Text("10 Detik") })
+                    }
+                }
+            }
+        }
+
+        Button(
+            onClick = { viewModel.generateAiVideoFromText() },
+            enabled = !isGenerating && prompt.isNotBlank(),
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            if (isGenerating) {
+                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
+                Spacer(Modifier.width(8.dp))
+                Text("Veo 3.1 Sedang Merender Video AI...")
+            } else {
+                Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Generate Video AI (veo-3.1-fast)", fontWeight = FontWeight.Bold)
+            }
+        }
+
+        if (generatedVideo != null) {
+            Button(
+                onClick = { viewModel.applyAiVideoToPost() },
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Gunakan Video Ini Untuk Postingan", fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+// ==========================================
+// 4c. SELF VIDEO STUDIO COMPONENT
+// ==========================================
+@Composable
+fun SelfVideoStudioContent(viewModel: AutoPostViewModel) {
+    val hookText by viewModel.selfVideoHookText.collectAsState()
+    val subtitles by viewModel.selfVideoSubtitles.collectAsState()
+    val isGeneratingCopy by viewModel.isGeneratingVideoCopy.collectAsState()
+    val title by viewModel.studioContentTitle.collectAsState()
+
+    var showAddSubtitleDialog by remember { mutableStateOf(false) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("Preview Video & Subtitle Overlay:", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(360.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(Brush.verticalGradient(listOf(Slate900, Slate800, Color(0xFF020617))))
+                .border(1.dp, Slate700, RoundedCornerShape(16.dp))
+                .padding(16.dp)
+        ) {
+            Column(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.SpaceBetween
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = Color.Yellow,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = hookText.ifBlank { "HOOK 3 DETIK VIDEO DI SINI" },
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Black,
+                        color = Color.Black,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(vertical = 8.dp, horizontal = 10.dp)
+                    )
+                }
+
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(64.dp)
+                            .clip(CircleShape)
+                            .background(UtilityBlue600.copy(alpha = 0.2f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Default.Videocam, contentDescription = null, tint = UtilityBlue400, modifier = Modifier.size(36.dp))
+                    }
+                    Text(
+                        text = "9:16 Vertical Creator Ratio",
+                        fontSize = 12.sp,
+                        color = Color.White.copy(alpha = 0.6f)
+                    )
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = Color.Black.copy(alpha = 0.75f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(10.dp)) {
+                        Text(
+                            text = "Subtitle Dinamis:",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = UtilityBlue400
+                        )
+                        Text(
+                            text = subtitles.joinToString(" ") { it },
+                            fontSize = 12.sp,
+                            color = Color.White,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+            }
+        }
+
+        Button(
+            onClick = { viewModel.generateVideoScript(title) },
+            enabled = !isGeneratingCopy,
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(10.dp)
+        ) {
+            if (isGeneratingCopy) {
+                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
+                Spacer(Modifier.width(8.dp))
+                Text("Gemini AI Membuat Script...")
+            } else {
+                Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Generate Hook Banner & Subtitle dengan AI")
+            }
+        }
+
+        Card(
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text("Teks Hook Atas Video:", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+
+                OutlinedTextField(
+                    value = hookText,
+                    onValueChange = { viewModel.setSelfVideoHookText(it) },
+                    label = { Text("Teks Hook (Maks 10 kata)") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+
+        Card(
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Daftar Subtitle / Baris Naskah:", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    IconButton(onClick = { showAddSubtitleDialog = true }) {
+                        Icon(Icons.Default.Add, contentDescription = "Tambah Subtitle", tint = MaterialTheme.colorScheme.primary)
+                    }
+                }
+
+                subtitles.forEachIndexed { index, line ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer, modifier = Modifier.size(20.dp)) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text("${index + 1}", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                        Text(
+                            text = line,
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f)
+                        )
+                        IconButton(
+                            onClick = {
+                                val updated = subtitles.toMutableList()
+                                updated.removeAt(index)
+                                viewModel.updateSelfVideoSubtitles(updated)
+                            },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(Icons.Default.Close, contentDescription = "Hapus", modifier = Modifier.size(14.dp), tint = StatusFailed)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showAddSubtitleDialog) {
+        var newLine by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { showAddSubtitleDialog = false },
+            title = { Text("Tambah Baris Subtitle", fontSize = 16.sp, fontWeight = FontWeight.Bold) },
+            text = {
+                OutlinedTextField(
+                    value = newLine,
+                    onValueChange = { newLine = it },
+                    label = { Text("Kalimat Subtitle") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (newLine.isNotBlank()) {
+                            viewModel.updateSelfVideoSubtitles(subtitles + newLine)
+                            showAddSubtitleDialog = false
+                        }
+                    }
+                ) {
+                    Text("Tambah")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAddSubtitleDialog = false }) {
+                    Text("Batal")
+                }
+            }
+        )
+    }
+}
+
+// ==========================================
+// COMMON SCHEDULE POST DIALOG
+// ==========================================
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SchedulePostDialog(
+    defaultHour: Int,
+    defaultMinute: Int,
+    onDismiss: () -> Unit,
+    onConfirmSchedule: (List<SocialPlatform>, Long) -> Unit
+) {
+    var tiktokSelected by remember { mutableStateOf(true) }
+    var instagramSelected by remember { mutableStateOf(true) }
+    var youtubeSelected by remember { mutableStateOf(true) }
+    var facebookSelected by remember { mutableStateOf(false) }
+
+    var postHour by remember { mutableStateOf(defaultHour) }
+    var postMinute by remember { mutableStateOf(defaultMinute) }
+    var daysAhead by remember { mutableStateOf(0) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.ScheduleSend, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(8.dp))
+                Text("Jadwalkan Publikasi Konten", fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text("Pilih Platform Target:", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = tiktokSelected, onCheckedChange = { tiktokSelected = it })
+                    Text("TikTok Video (@creator_tiktok)", fontSize = 13.sp)
+                }
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = instagramSelected, onCheckedChange = { instagramSelected = it })
+                    Text("Instagram Reels / Carousel (@creator_reels)", fontSize = 13.sp)
+                }
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = youtubeSelected, onCheckedChange = { youtubeSelected = it })
+                    Text("YouTube Shorts (Creator Channel)", fontSize = 13.sp)
+                }
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = facebookSelected, onCheckedChange = { facebookSelected = it })
+                    Text("Facebook Reels (Page)", fontSize = 13.sp)
+                }
+
+                HorizontalDivider()
+
+                Text("Waktu Penayangan:", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    FilterChip(selected = daysAhead == 0, onClick = { daysAhead = 0 }, label = { Text("Hari Ini") })
+                    FilterChip(selected = daysAhead == 1, onClick = { daysAhead = 1 }, label = { Text("Besok") })
+                    FilterChip(selected = daysAhead == 2, onClick = { daysAhead = 2 }, label = { Text("+2 Hari") })
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text("Jam Tayang:", fontSize = 13.sp)
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer
+                    ) {
+                        Text(
+                            text = String.format("%02d:%02d WIB", postHour, postMinute),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val platforms = mutableListOf<SocialPlatform>()
+                    if (tiktokSelected) platforms.add(SocialPlatform.TIKTOK)
+                    if (instagramSelected) platforms.add(SocialPlatform.INSTAGRAM)
+                    if (youtubeSelected) platforms.add(SocialPlatform.YOUTUBE_SHORTS)
+                    if (facebookSelected) platforms.add(SocialPlatform.FACEBOOK_REELS)
+
+                    val cal = Calendar.getInstance()
+                    cal.add(Calendar.DAY_OF_YEAR, daysAhead)
+                    cal.set(Calendar.HOUR_OF_DAY, postHour)
+                    cal.set(Calendar.MINUTE, postMinute)
+                    cal.set(Calendar.SECOND, 0)
+
+                    onConfirmSchedule(platforms, cal.timeInMillis)
+                },
+                enabled = tiktokSelected || instagramSelected || youtubeSelected || facebookSelected
+            ) {
+                Text("Konfirmasi Jadwal")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Batal")
+            }
+        }
+    )
+}
