@@ -11,7 +11,7 @@ import org.json.JSONObject
 enum class SlideRole { HOOK, BODY, CTA }
 
 /** Jenis elemen yang bisa diletakkan & digeser di atas slide. */
-enum class CarouselElement { HEADLINE, BODY, SUBTEXT, CTA, LOGO, WATERMARK, PAGE_NUMBER }
+enum class CarouselElement { HEADLINE, BODY, SUBTEXT, CTA, LOGO, WATERMARK, PAGE_NUMBER, SWIPE }
 
 enum class TextAlignH { START, CENTER, END }
 
@@ -131,18 +131,26 @@ object CarouselPresets {
 
     val ctaIcons = listOf("\u27a1\ufe0f", "\ud83d\udc49", "\ud83d\udc47", "\ud83d\udcbe", "\ud83d\udd16", "\ud83d\udccc", "\u2764\ufe0f", "\ud83d\udd25", "\u2728", "\ud83d\udd01", "")
 
+    /** Ikon emoji bawaan untuk indikator geser (swipe). "" = tanpa ikon. */
+    val swipeIcons = listOf("\u27a1\ufe0f", "\ud83d\udc49", "\ud83d\udc46", "\u2b05\ufe0f", "\ud83d\udd25", "\u2728", "\ud83d\udc40", "")
+
+    /** Palet warna cepat untuk pewarnaan per-elemen (custom). */
+    val textColors = listOf("#FFFFFF", "#0F172A", "#38BDF8", "#F472B6", "#FACC15", "#4ADE80", "#FB7185", "#A78BFA", "#FB923C")
+
     val layoutTemplates = listOf("Classic Center", "Top Heading", "Bottom Bar", "Left Aligned", "Big Quote")
 
     fun defaultLayoutFor(role: SlideRole): List<ElementLayout> {
         val watermark = ElementLayout(CarouselElement.WATERMARK, 0.5f, 0.955f, 0.9f, 0.7f, align = TextAlignH.CENTER)
         val pageNum = ElementLayout(CarouselElement.PAGE_NUMBER, 0.12f, 0.055f, 0.3f, 0.7f, align = TextAlignH.START)
         val logo = ElementLayout(CarouselElement.LOGO, 0.87f, 0.07f, 0.16f, 1f, align = TextAlignH.END)
+        val swipe = ElementLayout(CarouselElement.SWIPE, 0.8f, 0.9f, 0.36f, 0.85f, align = TextAlignH.END)
         return when (role) {
             SlideRole.HOOK -> listOf(
                 pageNum, logo,
                 ElementLayout(CarouselElement.HEADLINE, 0.5f, 0.44f, 0.86f, 1.6f, bold = true, align = TextAlignH.CENTER),
                 ElementLayout(CarouselElement.BODY, 0.5f, 0.66f, 0.82f, 0.95f, align = TextAlignH.CENTER),
                 ElementLayout(CarouselElement.SUBTEXT, 0.5f, 0.87f, 0.7f, 0.85f, align = TextAlignH.CENTER),
+                swipe,
                 watermark
             )
             SlideRole.BODY -> listOf(
@@ -150,6 +158,7 @@ object CarouselPresets {
                 ElementLayout(CarouselElement.HEADLINE, 0.5f, 0.3f, 0.86f, 1.25f, bold = true, align = TextAlignH.CENTER),
                 ElementLayout(CarouselElement.BODY, 0.5f, 0.56f, 0.84f, 1f, align = TextAlignH.CENTER),
                 ElementLayout(CarouselElement.SUBTEXT, 0.82f, 0.9f, 0.5f, 0.8f, align = TextAlignH.END),
+                swipe,
                 watermark
             )
             SlideRole.CTA -> listOf(
@@ -157,6 +166,7 @@ object CarouselPresets {
                 ElementLayout(CarouselElement.HEADLINE, 0.5f, 0.42f, 0.86f, 1.4f, bold = true, align = TextAlignH.CENTER),
                 ElementLayout(CarouselElement.BODY, 0.5f, 0.62f, 0.82f, 0.95f, align = TextAlignH.CENTER),
                 ElementLayout(CarouselElement.CTA, 0.5f, 0.82f, 0.7f, 1.05f, bold = true, align = TextAlignH.CENTER),
+                swipe,
                 watermark
             )
         }
@@ -222,11 +232,18 @@ data class CarouselDesign(
     val textColorHex: String = "#FFFFFF",
     val accentColorHex: String = "#38BDF8",
     val baseFontScale: Float = 1f,
-    val ctaText: String = "Geser",
+    val ctaText: String = "Simpan & Bagikan",
     val ctaIcon: String = "\u27a1\ufe0f",
     val watermarkText: String = "@AutoPostStudio",
     val logoBase64: String? = null,
     val showPageNumber: Boolean = true,
+    // --- Indikator geser (swipe): sepenuhnya bisa dikustom, bukan hardcode ---
+    val swipeEnabled: Boolean = true,
+    val swipeText: String = "Geser",
+    val swipeIconBuiltin: String = "\u27a1\ufe0f",
+    val swipeIconBase64: String? = null,
+    val swipeIconOnly: Boolean = false,
+    val swipeShowOnLastSlide: Boolean = false,
     val aiBackgroundPrompt: String = "",
     val layoutTemplate: String = "Classic Center",
     val layouts: Map<SlideRole, List<ElementLayout>> = mapOf(
@@ -286,6 +303,12 @@ data class CarouselDesign(
         put("watermarkText", watermarkText)
         put("logoBase64", logoBase64 ?: JSONObject.NULL)
         put("showPageNumber", showPageNumber)
+        put("swipeEnabled", swipeEnabled)
+        put("swipeText", swipeText)
+        put("swipeIconBuiltin", swipeIconBuiltin)
+        put("swipeIconBase64", swipeIconBase64 ?: JSONObject.NULL)
+        put("swipeIconOnly", swipeIconOnly)
+        put("swipeShowOnLastSlide", swipeShowOnLastSlide)
         put("aiBackgroundPrompt", aiBackgroundPrompt)
         put("layoutTemplate", layoutTemplate)
         val lay = JSONObject()
@@ -315,6 +338,16 @@ data class CarouselDesign(
                     if (list.isNotEmpty()) layouts[role] = list
                 }
             }
+            // Forward-compat: pastikan elemen baru (mis. SWIPE) tetap ada walau desain lama tersimpan tanpa elemen itu.
+            if (layouts.isNotEmpty()) {
+                for (role in SlideRole.values()) {
+                    val existing = layouts[role]?.toMutableList() ?: continue
+                    for (def in CarouselPresets.defaultLayoutFor(role)) {
+                        if (existing.none { it.element == def.element }) existing.add(def)
+                    }
+                    layouts[role] = existing
+                }
+            }
             return CarouselDesign(
                 aspectRatio = o.optString("aspectRatio", base.aspectRatio),
                 typographyStyle = o.optString("typographyStyle", base.typographyStyle),
@@ -328,6 +361,12 @@ data class CarouselDesign(
                 watermarkText = o.optString("watermarkText", base.watermarkText),
                 logoBase64 = if (o.has("logoBase64") && !o.isNull("logoBase64")) o.optString("logoBase64") else null,
                 showPageNumber = o.optBoolean("showPageNumber", true),
+                swipeEnabled = o.optBoolean("swipeEnabled", true),
+                swipeText = o.optString("swipeText", base.swipeText),
+                swipeIconBuiltin = o.optString("swipeIconBuiltin", base.swipeIconBuiltin),
+                swipeIconBase64 = if (o.has("swipeIconBase64") && !o.isNull("swipeIconBase64")) o.optString("swipeIconBase64") else null,
+                swipeIconOnly = o.optBoolean("swipeIconOnly", false),
+                swipeShowOnLastSlide = o.optBoolean("swipeShowOnLastSlide", false),
                 aiBackgroundPrompt = o.optString("aiBackgroundPrompt", base.aiBackgroundPrompt),
                 layoutTemplate = o.optString("layoutTemplate", base.layoutTemplate),
                 layouts = if (layouts.isEmpty()) base.layouts else layouts
