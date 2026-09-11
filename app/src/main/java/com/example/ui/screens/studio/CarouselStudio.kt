@@ -76,6 +76,7 @@ private fun labelForElement(e: CarouselElement): String = when (e) {
     CarouselElement.LOGO -> "Logo"
     CarouselElement.WATERMARK -> "Watermark"
     CarouselElement.PAGE_NUMBER -> "No. Halaman"
+    CarouselElement.SWIPE -> "Geser"
 }
 
 private fun roleLabel(r: SlideRole): String = when (r) {
@@ -222,6 +223,9 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
     val logoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) viewModel.setLogoFromUri(uri)
     }
+    val swipeIconPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) viewModel.setSwipeIconFromUri(uri)
+    }
 
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         // Header
@@ -289,10 +293,12 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
                                 CarouselElement.WATERMARK -> design.watermarkText
                                 CarouselElement.PAGE_NUMBER -> String.format("%02d / %02d", page + 1, total)
                                 CarouselElement.LOGO -> ""
+                                CarouselElement.SWIPE -> design.swipeText
                             }
                             val skip = !el.visible ||
                                 (el.element == CarouselElement.PAGE_NUMBER && !design.showPageNumber) ||
-                                (el.element != CarouselElement.LOGO && display.isBlank()) ||
+                                (el.element == CarouselElement.SWIPE && (!design.swipeEnabled || (page >= total - 1 && !design.swipeShowOnLastSlide))) ||
+                                (el.element != CarouselElement.LOGO && el.element != CarouselElement.SWIPE && display.isBlank()) ||
                                 (el.element == CarouselElement.LOGO && design.logoBase64 == null)
                             if (!skip) {
                                 key(el.element) {
@@ -345,6 +351,32 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
                                                         contentScale = ContentScale.Fit,
                                                         modifier = Modifier.width(elWidthDp)
                                                     )
+                                                }
+                                            }
+                                            CarouselElement.SWIPE -> {
+                                                val accentSw = hexColor(design.accentColorHex, Color(0xFF38BDF8))
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    modifier = Modifier
+                                                        .clip(RoundedCornerShape(50))
+                                                        .background(Color.Black.copy(alpha = 0.55f))
+                                                        .border(1.dp, accentSw, RoundedCornerShape(50))
+                                                        .padding(horizontal = 10.dp, vertical = 5.dp)
+                                                ) {
+                                                    if (!design.swipeIconOnly && design.swipeText.isNotBlank()) {
+                                                        Text(caseText(design.swipeText, el.case), style = ts.copy(shadow = null))
+                                                        if (design.swipeIconBase64 != null || design.swipeIconBuiltin.isNotBlank()) Spacer(Modifier.width(4.dp))
+                                                    }
+                                                    val swipePng = rememberBase64Image(design.swipeIconBase64)
+                                                    if (swipePng != null) {
+                                                        Image(
+                                                            bitmap = swipePng,
+                                                            contentDescription = null,
+                                                            modifier = Modifier.size(with(density) { (sizePx * 1.2f).toDp() })
+                                                        )
+                                                    } else if (design.swipeIconBuiltin.isNotBlank()) {
+                                                        Text(design.swipeIconBuiltin, style = ts.copy(shadow = null))
+                                                    }
                                                 }
                                             }
                                             CarouselElement.SUBTEXT, CarouselElement.CTA -> {
@@ -624,6 +656,71 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
             }
         }
 
+        // 5b. Indikator geser (swipe) - sepenuhnya bisa dikustom (teks/emoji/PNG/off)
+        PanelCard("Indikator Geser (Swipe)") {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = design.swipeEnabled, onCheckedChange = { viewModel.toggleDesignSwipe() })
+                Text("Tampilkan indikator geser", fontSize = 12.sp)
+            }
+            if (design.swipeEnabled) {
+                OutlinedTextField(
+                    value = design.swipeText,
+                    onValueChange = { viewModel.setDesignSwipeText(it) },
+                    label = { Text("Teks geser (boleh kosong)") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text("Ikon geser (emoji bawaan):", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(CarouselPresets.swipeIcons) { icon ->
+                        val selected = design.swipeIconBase64 == null && design.swipeIconBuiltin == icon
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.25f) else MaterialTheme.colorScheme.surfaceVariant,
+                            border = if (selected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null,
+                            modifier = Modifier.clickable { viewModel.setDesignSwipeBuiltinIcon(icon) }
+                        ) {
+                            Text(
+                                if (icon.isBlank()) "(tanpa)" else icon,
+                                fontSize = if (icon.isBlank()) 10.sp else 16.sp,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                            )
+                        }
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { swipeIconPicker.launch("image/*") }, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Default.Image, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text(if (design.swipeIconBase64 != null) "Ganti PNG" else "Upload PNG", fontSize = 10.sp)
+                    }
+                    if (design.swipeIconBase64 != null) {
+                        OutlinedButton(onClick = { viewModel.clearSwipeIcon() }, modifier = Modifier.weight(1f)) {
+                            Text("Hapus PNG", fontSize = 10.sp)
+                        }
+                    }
+                }
+                if (design.swipeIconBase64 != null) {
+                    val swipePreview = rememberBase64Image(design.swipeIconBase64)
+                    if (swipePreview != null) {
+                        Image(bitmap = swipePreview, contentDescription = "Ikon geser", modifier = Modifier.size(32.dp))
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = design.swipeIconOnly, onCheckedChange = { viewModel.toggleSwipeIconOnly() })
+                    Text("Ikon saja (tanpa teks)", fontSize = 12.sp)
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = design.swipeShowOnLastSlide, onCheckedChange = { viewModel.toggleSwipeShowOnLast() })
+                    Text("Tampilkan juga di slide terakhir", fontSize = 12.sp)
+                }
+                Text(
+                    "Indikator geser kini elemen mandiri: ketuk 'Geser' di daftar elemen di bawah untuk memindah/mengatur ukuran & warnanya seperti elemen lain.",
+                    fontSize = 10.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
         // 6. Logo & watermark
         PanelCard("Logo & Watermark") {
             OutlinedTextField(
@@ -694,6 +791,32 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         items(listOf(TextEffect.NONE, TextEffect.SHADOW, TextEffect.OUTLINE, TextEffect.HIGHLIGHT, TextEffect.NEON, TextEffect.GRADIENT)) { ef ->
                             FilterChip(selected = current.effect == ef, onClick = { viewModel.setElementEffect(role, selectedElement, ef) }, label = { Text(effectLabel(ef), fontSize = 10.sp) })
+                        }
+                    }
+                    Text("Warna teks (custom):", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        item {
+                            val isAuto = current.colorHex == null
+                            Box(
+                                modifier = Modifier
+                                    .size(30.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                                    .border(if (isAuto) 2.dp else 1.dp, if (isAuto) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.5f), CircleShape)
+                                    .clickable { viewModel.setElementColor(role, selectedElement, null) },
+                                contentAlignment = Alignment.Center
+                            ) { Text("A", fontSize = 11.sp) }
+                        }
+                        items(CarouselPresets.textColors) { hex ->
+                            val selColor = current.colorHex?.equals(hex, ignoreCase = true) == true
+                            Box(
+                                modifier = Modifier
+                                    .size(30.dp)
+                                    .clip(CircleShape)
+                                    .background(hexColor(hex, Color.White))
+                                    .border(if (selColor) 2.dp else 1.dp, if (selColor) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.5f), CircleShape)
+                                    .clickable { viewModel.setElementColor(role, selectedElement, hex) }
+                            )
                         }
                     }
                 }
