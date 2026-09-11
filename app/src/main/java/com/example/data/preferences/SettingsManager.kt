@@ -7,6 +7,8 @@ import com.example.data.local.entity.CarouselDesign
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import org.json.JSONArray
+import org.json.JSONObject
 
 data class AppSettings(
     val geminiApiKey: String = "",
@@ -27,7 +29,15 @@ data class AppSettings(
     val themeMode: String = "DARK", // DARK, LIGHT, SYSTEM
     val appLanguage: String = "ID", // ID, EN
     val autoRetryOnError: Boolean = true,
-    val carouselDesignJson: String = "" // Desain carousel favorit/default (JSON)
+    val carouselDesignJson: String = "", // Desain carousel favorit/default (JSON)
+    val uploadedBackgroundsJson: String = "", // Galeri background yang pernah di-upload (JSON array base64)
+    val savedStylesJson: String = "" // Gaya carousel tersimpan bernama (JSON array {name, design})
+)
+
+/** Satu gaya carousel tersimpan yang bisa diberi nama & dipakai ulang. */
+data class SavedCarouselStyle(
+    val name: String,
+    val design: CarouselDesign
 )
 
 class SettingsManager(context: Context) {
@@ -65,7 +75,9 @@ class SettingsManager(context: Context) {
             themeMode = prefs.getString("theme_mode", "DARK") ?: "DARK",
             appLanguage = prefs.getString("app_language", "ID") ?: "ID",
             autoRetryOnError = prefs.getBoolean("auto_retry", true),
-            carouselDesignJson = prefs.getString("carousel_design_json", "") ?: ""
+            carouselDesignJson = prefs.getString("carousel_design_json", "") ?: "",
+            uploadedBackgroundsJson = prefs.getString("uploaded_backgrounds_json", "") ?: "",
+            savedStylesJson = prefs.getString("saved_styles_json", "") ?: ""
         )
     }
 
@@ -90,6 +102,8 @@ class SettingsManager(context: Context) {
             putString("app_language", newSettings.appLanguage)
             putBoolean("auto_retry", newSettings.autoRetryOnError)
             putString("carousel_design_json", newSettings.carouselDesignJson)
+            putString("uploaded_backgrounds_json", newSettings.uploadedBackgroundsJson)
+            putString("saved_styles_json", newSettings.savedStylesJson)
             apply()
         }
         _settings.value = newSettings
@@ -112,5 +126,54 @@ class SettingsManager(context: Context) {
     /** Menyimpan desain carousel sebagai favorit/default untuk dipakai konten berikutnya. */
     fun saveFavoriteCarouselDesign(design: CarouselDesign) {
         updateSettings(_settings.value.copy(carouselDesignJson = design.toJsonString()))
+    }
+
+    // --- Galeri background upload (persisten, bisa dipakai ulang) ---
+    fun loadUploadedBackgrounds(): List<String> {
+        val json = _settings.value.uploadedBackgroundsJson
+        if (json.isBlank()) return emptyList()
+        return try {
+            val arr = JSONArray(json)
+            (0 until arr.length()).mapNotNull { i ->
+                val s = arr.optString(i)
+                if (s.isNullOrBlank()) null else s
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    fun saveUploadedBackgrounds(list: List<String>) {
+        val arr = JSONArray()
+        list.forEach { arr.put(it) }
+        updateSettings(_settings.value.copy(uploadedBackgroundsJson = arr.toString()))
+    }
+
+    // --- Gaya carousel tersimpan bernama ---
+    fun loadSavedStyles(): List<SavedCarouselStyle> {
+        val json = _settings.value.savedStylesJson
+        if (json.isBlank()) return emptyList()
+        return try {
+            val arr = JSONArray(json)
+            (0 until arr.length()).mapNotNull { i ->
+                val o = arr.optJSONObject(i) ?: return@mapNotNull null
+                val name = o.optString("name")
+                if (name.isNullOrBlank()) return@mapNotNull null
+                SavedCarouselStyle(name, CarouselDesign.fromJsonString(o.optString("design")))
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    fun saveSavedStyles(list: List<SavedCarouselStyle>) {
+        val arr = JSONArray()
+        list.forEach { s ->
+            arr.put(JSONObject().apply {
+                put("name", s.name)
+                put("design", s.design.toJsonString())
+            })
+        }
+        updateSettings(_settings.value.copy(savedStylesJson = arr.toString()))
     }
 }

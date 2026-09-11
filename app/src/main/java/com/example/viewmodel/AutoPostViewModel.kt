@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.AutoPostApplication
 import com.example.data.local.entity.*
 import com.example.data.preferences.AppSettings
+import com.example.data.preferences.SavedCarouselStyle
 import com.example.data.remote.GeneratedPersona
 import com.example.data.remote.GeneratedPlanItem
 import com.example.data.remote.PodcastSegmentHighlight
@@ -375,11 +376,18 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
     private val _isGeneratingSlideImage = MutableStateFlow(false)
     val isGeneratingSlideImage = _isGeneratingSlideImage.asStateFlow()
 
-    // --- Pencarian gambar internet (Openverse) ---
+    // --- Pencarian gambar internet (Wikimedia Commons + fallback) ---
     private val _imageSearchResults = MutableStateFlow<List<StudioImageResult>>(emptyList())
     val imageSearchResults = _imageSearchResults.asStateFlow()
     private val _isSearchingImages = MutableStateFlow(false)
     val isSearchingImages = _isSearchingImages.asStateFlow()
+
+    // --- Galeri background upload (persisten) & gaya carousel tersimpan bernama ---
+    private val _uploadedBackgrounds = MutableStateFlow(settingsManager.loadUploadedBackgrounds())
+    val uploadedBackgrounds = _uploadedBackgrounds.asStateFlow()
+
+    private val _savedStyles = MutableStateFlow(settingsManager.loadSavedStyles())
+    val savedStyles = _savedStyles.asStateFlow()
 
     fun setCarouselTheme(theme: String) {
         _carouselTheme.value = theme
@@ -573,6 +581,35 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
     fun setElementScale(role: SlideRole, element: CarouselElement, scale: Float) = mutateElement(role, element) { it.copy(fontScale = scale.coerceIn(0.4f, 3.0f)) }
     fun setElementAlign(role: SlideRole, element: CarouselElement, align: TextAlignH) = mutateElement(role, element) { it.copy(align = align) }
 
+    // Terapkan GAYA elemen (bukan posisi) ke elemen yang sama di semua peran (HOOK/ISI/CTA).
+    fun applyElementStyleToAllRoles(fromRole: SlideRole, element: CarouselElement) {
+        val source = _carouselDesign.value.elementIn(fromRole, element) ?: return
+        updateDesign { d ->
+            var design = d
+            for (r in SlideRole.values()) {
+                if (r == fromRole) continue
+                val target = design.elementIn(r, element) ?: continue
+                design = design.withElement(
+                    r,
+                    target.copy(
+                        fontScale = source.fontScale,
+                        bold = source.bold,
+                        italic = source.italic,
+                        underline = source.underline,
+                        align = source.align,
+                        colorHex = source.colorHex,
+                        visible = source.visible,
+                        case = source.case,
+                        effect = source.effect,
+                        letterSpacing = source.letterSpacing
+                    )
+                )
+            }
+            design
+        }
+        showMessage("Gaya elemen diterapkan ke semua peran (HOOK / ISI / CTA).")
+    }
+
     fun resetRoleLayout(role: SlideRole) {
         updateDesign { d ->
             val m = d.layouts.toMutableMap()
@@ -585,6 +622,38 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
     fun saveDesignAsFavorite() {
         settingsManager.saveFavoriteCarouselDesign(_carouselDesign.value)
         showMessage("Desain ditetapkan sebagai default/favorit. Konten baru otomatis pakai gaya & posisi ini.")
+    }
+
+    // --- Gaya carousel tersimpan bernama: simpan -> beri nama -> pakai ulang ---
+    fun saveCurrentDesignAsStyle(name: String) {
+        val n = name.trim()
+        if (n.isBlank()) {
+            showMessage("Beri nama gaya dulu sebelum menyimpan.")
+            return
+        }
+        val list = _savedStyles.value.toMutableList()
+        val idx = list.indexOfFirst { it.name.equals(n, ignoreCase = true) }
+        val style = SavedCarouselStyle(n, _carouselDesign.value)
+        if (idx >= 0) list[idx] = style else list.add(0, style)
+        while (list.size > 20) list.removeAt(list.size - 1)
+        _savedStyles.value = list
+        settingsManager.saveSavedStyles(list)
+        showMessage("Gaya '$n' disimpan. Bisa dipakai ulang kapan saja.")
+    }
+
+    fun applySavedStyle(name: String) {
+        val style = _savedStyles.value.firstOrNull { it.name == name } ?: return
+        _carouselDesign.value = style.design
+        showMessage("Gaya '${style.name}' diterapkan.")
+    }
+
+    fun deleteSavedStyle(name: String) {
+        val list = _savedStyles.value.toMutableList()
+        if (list.removeAll { it.name == name }) {
+            _savedStyles.value = list
+            settingsManager.saveSavedStyles(list)
+            showMessage("Gaya '$name' dihapus.")
+        }
     }
 
     fun moveSlide(from: Int, to: Int) {
@@ -615,11 +684,12 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             val b64 = uriToBase64(uri)
             if (b64 != null) {
+                addUploadedBackground(b64)
                 val list = _carouselSlides.value.toMutableList()
                 if (index in list.indices) {
                     list[index] = list[index].copy(imageBase64 = b64)
                     _carouselSlides.value = list
-                    showMessage("Background dari file dipasang di Slide ${index + 1}.")
+                    showMessage("Background dari file dipasang di Slide ${index + 1} & disimpan ke galeri.")
                 }
             } else showMessage("Gagal membaca gambar.")
         }
@@ -632,6 +702,41 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
             _carouselSlides.value = list
             showMessage("Background Slide ${index + 1} dikosongkan (pakai tema).")
         }
+    }
+
+    // --- Galeri background upload: preview, dipakai ulang, hapus manual ---
+    private fun addUploadedBackground(b64: String) {
+        val list = _uploadedBackgrounds.value.toMutableList()
+        list.remove(b64) // hindari duplikat, taruh terbaru di depan
+        list.add(0, b64)
+        while (list.size > 15) list.removeAt(list.size - 1)
+        _uploadedBackgrounds.value = list
+        settingsManager.saveUploadedBackgrounds(list)
+    }
+
+    fun removeUploadedBackground(b64: String) {
+        val list = _uploadedBackgrounds.value.toMutableList()
+        if (list.remove(b64)) {
+            _uploadedBackgrounds.value = list
+            settingsManager.saveUploadedBackgrounds(list)
+            showMessage("Gambar dihapus dari galeri unggahan.")
+        }
+    }
+
+    fun applyUploadedBackgroundToSlide(index: Int, b64: String) {
+        val list = _carouselSlides.value.toMutableList()
+        if (index in list.indices) {
+            list[index] = list[index].copy(imageBase64 = b64)
+            _carouselSlides.value = list
+            showMessage("Background dipasang di Slide ${index + 1}.")
+        }
+    }
+
+    fun applyUploadedBackgroundToAllSlides(b64: String) {
+        val list = _carouselSlides.value.toMutableList()
+        for (i in list.indices) list[i] = list[i].copy(imageBase64 = b64)
+        _carouselSlides.value = list
+        showMessage("Background dipasang ke semua slide.")
     }
 
     private suspend fun uriToBase64(uri: Uri): String? = withContext(Dispatchers.IO) {

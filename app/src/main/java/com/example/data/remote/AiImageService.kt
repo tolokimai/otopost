@@ -28,19 +28,10 @@ data class AiImageResult(
 /**
  * Service khusus generate GAMBAR (bukan teks) via Google Generative Language API.
  *
- * Kenapa dipisah dari GeminiService: model image generation butuh endpoint,
- * request body, dan parsing yang berbeda. Sebelumnya kode memanggil model yang
- * tidak ada ("gemini-3.1-flash-image") sehingga selalu 404 lalu diam-diam jatuh
- * ke generator grafis tema lokal (isAiGenerated=false) -> user melihat pesan
- * "sukses mengganti tema", padahal AI tidak pernah menghasilkan gambar.
- *
- * Urutan percobaan model (yang benar-benar tersedia di Generative Language API):
- *   1. gemini-2.5-flash-image-preview  ("Nano Banana", :generateContent, inlineData)
- *   2. imagen-3.0-generate-002          (:predict, predictions[].bytesBase64Encoded)
- *
- * Jika semua gagal, mengembalikan AiImageResult(base64=null, isAiGenerated=false,
- * errorReason=...) sehingga pemanggil bisa menampilkan pesan JUJUR & tidak menimpa
- * background yang ada.
+ * PENTING (penyebab error 404 sebelumnya): model "gemini-2.5-flash-image-preview"
+ * SUDAH DIMATIKAN oleh Google, sehingga endpoint-nya selalu balas 404 Not Found.
+ * Model image-generation yang aktif sekarang adalah versi GA: "gemini-2.5-flash-image"
+ * (alias "Nano Banana"). Kita coba model GA dulu, lalu beberapa fallback, lalu Imagen.
  */
 class AiImageService(private val getApiKey: () -> String) {
 
@@ -52,6 +43,13 @@ class AiImageService(private val getApiKey: () -> String) {
 
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
     private val invalidKeys = setOf("", "MY_GEMINI_API_KEY")
+
+    // Model generateContent yang mendukung keluaran gambar (native image generation),
+    // diurutkan dari yang paling didukung. "-preview" lama sengaja TIDAK dipakai lagi.
+    private val imageGenModels = listOf(
+        "gemini-2.5-flash-image",                     // GA (utama, Nano Banana)
+        "gemini-2.0-flash-preview-image-generation"   // fallback untuk sebagian API key
+    )
 
     suspend fun generateBackground(
         headline: String,
@@ -70,22 +68,24 @@ class AiImageService(private val getApiKey: () -> String) {
         val normalizedRatio = normalizeRatio(aspectRatio)
         val errors = StringBuilder()
 
-        // --- Percobaan 1: Gemini 2.5 Flash Image (Nano Banana) ---
-        try {
-            val res = tryGeminiFlashImage(prompt, apiKey)
-            if (res != null) return@withContext AiImageResult(
-                base64 = res,
-                isAiGenerated = true,
-                modelUsed = "gemini-2.5-flash-image-preview"
-            )
-        } catch (e: Exception) {
-            Log.w("AiImageService", "Flash image gagal", e)
-            errors.append("flash-image: ${e.message}; ")
+        // --- Percobaan model generateContent (Gemini native image) ---
+        for (model in imageGenModels) {
+            try {
+                val res = tryGeminiImage(model, prompt, apiKey)
+                if (res != null) return@withContext AiImageResult(
+                    base64 = res,
+                    isAiGenerated = true,
+                    modelUsed = model
+                )
+            } catch (e: Exception) {
+                Log.w("AiImageService", "Model $model gagal", e)
+                errors.append("$model: ${e.message}; ")
+            }
         }
 
-        // --- Percobaan 2: Imagen 3 ---
+        // --- Fallback terakhir: Imagen 3 (endpoint :predict) ---
         try {
-            val res = tryImagen(prompt, normalizedRatio, apiKey)
+            val res = tryImagen("imagen-3.0-generate-002", prompt, normalizedRatio, apiKey)
             if (res != null) return@withContext AiImageResult(
                 base64 = res,
                 isAiGenerated = true,
@@ -93,27 +93,33 @@ class AiImageService(private val getApiKey: () -> String) {
             )
         } catch (e: Exception) {
             Log.w("AiImageService", "Imagen gagal", e)
-            errors.append("imagen: ${e.message}; ")
+            errors.append("imagen-3.0-generate-002: ${e.message}; ")
         }
 
-        val reason = if (errors.isEmpty())
-            "Model gambar tidak mengembalikan data. Kemungkinan API Key belum punya akses ke model gambar (Imagen/Gemini Image)."
-        else
-            "Model gambar menolak permintaan. Detail: ${errors.toString().take(300)}"
+        val detail = errors.toString()
+        val reason = buildString {
+            append("Semua model gambar menolak permintaan. ")
+            when {
+                detail.contains("404") -> append("Model tidak tersedia untuk API key ini (404) - kemungkinan key belum punya akses ke image generation (Gemini 2.5 Flash Image / Imagen) atau butuh billing aktif. ")
+                detail.contains("403") || detail.contains("PERMISSION") -> append("Akses ditolak (403): API key belum diizinkan memakai model gambar. ")
+                detail.contains("429") -> append("Kuota habis (429): coba lagi nanti. ")
+            }
+            append("Alternatif: gunakan fitur 'Cari Gambar dari Internet'. Detail teknis: ${detail.take(240)}")
+        }
         AiImageResult(errorReason = reason)
     }
 
-    private fun tryGeminiFlashImage(prompt: String, apiKey: String): String? {
-        val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent?key=$apiKey"
+    private fun tryGeminiImage(model: String, prompt: String, apiKey: String): String? {
+        val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey"
         val body = JSONObject().apply {
-            val contents = JSONArray().apply {
+            put("contents", JSONArray().apply {
                 put(JSONObject().apply {
+                    put("role", "user")
                     put("parts", JSONArray().apply {
                         put(JSONObject().put("text", prompt))
                     })
                 })
-            }
-            put("contents", contents)
+            })
             put("generationConfig", JSONObject().apply {
                 put("responseModalities", JSONArray().apply {
                     put("TEXT")
@@ -146,8 +152,8 @@ class AiImageService(private val getApiKey: () -> String) {
         }
     }
 
-    private fun tryImagen(prompt: String, aspectRatio: String, apiKey: String): String? {
-        val url = "https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key=$apiKey"
+    private fun tryImagen(model: String, prompt: String, aspectRatio: String, apiKey: String): String? {
+        val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:predict?key=$apiKey"
         val body = JSONObject().apply {
             put("instances", JSONArray().apply {
                 put(JSONObject().put("prompt", prompt))
