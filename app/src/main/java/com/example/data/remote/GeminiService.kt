@@ -467,12 +467,15 @@ class GeminiService(private val getApiKey: () -> String) {
     }
 
     // --- 1. GENERATE SLIDE IMAGE BACKGROUND (Imagen 3 & Graphic Engine) ---
+    // customPrompt: arahan kreatif dari user (kolom prompt di UI). Selalu melewati
+    // sanitizeUserImagePrompt() sebagai guard di system prompt (anti teks/logo, SFW, dibatasi).
     suspend fun generateSlideImage(
         headline: String,
         body: String,
         theme: String,
         slideNumber: Int = 1,
-        aspectRatio: String = "1:1"
+        aspectRatio: String = "1:1",
+        customPrompt: String = ""
     ): SlideImageResult = withContext(Dispatchers.IO) {
         val apiKey = getApiKey()
         val themeKeywords = when (theme.uppercase()) {
@@ -493,7 +496,13 @@ class GeminiService(private val getApiKey: () -> String) {
             else -> "1:1"
         }
 
-        val prompt = "Ultra high quality aesthetic background wallpaper for topic: '$headline'. Visual style: $themeKeywords. PURE BACKGROUND ART ONLY. STRICTLY NO TEXT, NO LETTERS, NO WORDS, NO NUMBERS, NO WATERMARKS, NO LOGOS, NO TYPOGRAPHY."
+        // System-prompt guard: arahan user dibersihkan dulu, lalu selalu dibungkus batasan keras.
+        val safeCustom = sanitizeUserImagePrompt(customPrompt)
+        val prompt = if (safeCustom.isNotBlank()) {
+            "Ultra high quality aesthetic social media background wallpaper. User creative direction: '$safeCustom'. Base visual mood: $themeKeywords. PURE BACKGROUND ART ONLY. STRICTLY NO TEXT, NO LETTERS, NO WORDS, NO NUMBERS, NO WATERMARKS, NO LOGOS, NO TYPOGRAPHY, NO UI ELEMENTS. Safe-for-work, non-violent, brand friendly, tasteful composition with clear negative space for overlaid text."
+        } else {
+            "Ultra high quality aesthetic background wallpaper for topic: '$headline'. Visual style: $themeKeywords. PURE BACKGROUND ART ONLY. STRICTLY NO TEXT, NO LETTERS, NO WORDS, NO NUMBERS, NO WATERMARKS, NO LOGOS, NO TYPOGRAPHY."
+        }
 
         // Attempt 1: Imagen 3 (imagen-3.0-generate-002)
         if (apiKey.isNotBlank() && apiKey != "MY_GEMINI_API_KEY") {
@@ -624,6 +633,16 @@ class GeminiService(private val getApiKey: () -> String) {
             styleKeywords = themeKeywords,
             isAiGenerated = false
         )
+    }
+
+    /** Guard konten untuk prompt gambar dari user: rapikan, batasi panjang, buang kata terlarang. */
+    private fun sanitizeUserImagePrompt(raw: String): String {
+        if (raw.isBlank()) return ""
+        var s = raw.trim().replace(Regex("\\s+"), " ")
+        if (s.length > 400) s = s.substring(0, 400)
+        val banned = listOf("nude", "naked", "nsfw", "sex", "porn", "gore", "blood", "violence", "weapon", "kill", "nazi", "terror")
+        for (b in banned) s = s.replace(Regex("(?i)" + Regex.escape(b)), "")
+        return s.trim()
     }
 
     // --- 2. AUDIO TRANSCRIPTION (gemini-2.5-flash multimodal) ---
