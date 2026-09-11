@@ -475,7 +475,7 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
                 items(CarouselPresets.typographyStyles) { style ->
                     val selected = design.typographyStyle == style
                     val preset = CarouselPresets.typographyPresetFor(style)
-                    val sampleStyle = TextStyle(
+                    var sampleStyle = TextStyle(
                         color = Color.White,
                         fontSize = 20.sp,
                         fontWeight = if (preset.bold) FontWeight.ExtraBold else FontWeight.Normal,
@@ -486,9 +486,12 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
                             TextEffect.NEON -> Shadow(Color(0xFF38BDF8), Offset.Zero, 18f)
                             TextEffect.OUTLINE -> Shadow(Color.Black, Offset.Zero, 5f)
                             else -> null
-                        },
-                        brush = if (preset.effect == TextEffect.GRADIENT) Brush.verticalGradient(listOf(Color.White, Color(0xFF38BDF8))) else null
+                        }
                     )
+                    if (preset.effect == TextEffect.GRADIENT) {
+                        @OptIn(androidx.compose.ui.text.ExperimentalTextApi::class)
+                        sampleStyle = sampleStyle.copy(brush = Brush.verticalGradient(listOf(Color.White, Color(0xFF38BDF8))))
+                    }
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier
