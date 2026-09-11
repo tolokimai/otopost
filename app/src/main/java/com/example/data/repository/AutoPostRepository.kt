@@ -10,6 +10,8 @@ import com.example.data.remote.AiImageService
 import com.example.data.remote.GeminiService
 import com.example.data.remote.ImageSearchService
 import com.example.data.remote.SocialMediaPublisher
+import com.example.data.remote.YouTubeDownloadService
+import com.example.data.remote.YouTubeSearchService
 import com.example.data.remote.YouTubeTranscriptService
 import com.example.worker.PostPublishWorker
 import kotlinx.coroutines.flow.Flow
@@ -18,7 +20,7 @@ import java.util.concurrent.TimeUnit
 /**
  * Repository pusat yang menyatukan sumber data lokal (Room), preferensi, dan
  * layanan remote (Gemini teks, generate gambar AI, pencarian gambar internet,
- * publisher sosial media, transkrip YouTube).
+ * publisher sosial media, pencarian/unduh/transkrip YouTube).
  */
 class AutoPostRepository(
     private val context: Context,
@@ -53,6 +55,12 @@ class AutoPostRepository(
 
     // Layanan transkrip YouTube.
     val youTubeTranscriptService = YouTubeTranscriptService()
+
+    // Pencarian video YouTube relevan berdasarkan tema (butuh YouTube Data API key).
+    val youTubeSearchService = YouTubeSearchService { settingsManager.settings.value.youTubeApiKey }
+
+    // Pengunduh video YouTube on-device (best-effort).
+    val youTubeDownloadService = YouTubeDownloadService()
 
     // --- Personas ---
     val allPersonas: Flow<List<PersonaEntity>> = personaDao.getAllPersonas()
