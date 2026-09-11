@@ -32,6 +32,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
@@ -186,18 +187,50 @@ private fun styleForElement(el: ElementLayout, design: CarouselDesign, fontSizeS
     return ts
 }
 
+/**
+ * Accordion satu-terbuka: hanya SATU section terbuka pada satu waktu, dan SEMUA
+ * boleh tertutup (expandedId = null). Ketuk header untuk buka/tutup.
+ */
 @Composable
-private fun PanelCard(title: String, content: @Composable ColumnScope.() -> Unit) {
+private fun AccordionSection(
+    id: String,
+    title: String,
+    icon: ImageVector,
+    expandedId: String?,
+    onToggle: (String) -> Unit,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    val expanded = expandedId == id
     Card(
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Text(title, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-            content()
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onToggle(id) }
+                    .padding(14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(10.dp))
+                Text(title, fontSize = 13.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                Icon(
+                    if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = if (expanded) "Tutup" else "Buka",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (expanded) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 12.dp, end = 12.dp, bottom = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    content = content
+                )
+            }
         }
     }
 }
@@ -212,6 +245,10 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
     val isExporting by viewModel.isExportingCarousel.collectAsState()
     val title by viewModel.studioContentTitle.collectAsState()
     val hook by viewModel.studioContentHook.collectAsState()
+    val imageResults by viewModel.imageSearchResults.collectAsState()
+    val isSearchingImages by viewModel.isSearchingImages.collectAsState()
+    val uploadedBgs by viewModel.uploadedBackgrounds.collectAsState()
+    val savedStyles by viewModel.savedStyles.collectAsState()
 
     val total = slides.size.coerceAtLeast(1)
     val pagerState = rememberPagerState(pageCount = { slides.size })
@@ -220,6 +257,13 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
 
     var editMode by remember { mutableStateOf(true) }
     var selectedElement by remember { mutableStateOf(CarouselElement.HEADLINE) }
+
+    // State yang harus bertahan walau accordion ditutup-buka.
+    var imageQuery by remember { mutableStateOf("") }
+    var styleName by remember { mutableStateOf("") }
+    // Accordion: default buka 'konten'. Null = semua tertutup.
+    var expandedSection by remember { mutableStateOf<String?>("konten") }
+    val onToggle: (String) -> Unit = { id -> expandedSection = if (expandedSection == id) null else id }
 
     val bgPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) viewModel.setSlideBackgroundFromUri(activeIndex, uri)
@@ -231,7 +275,7 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
         if (uri != null) viewModel.setSwipeIconFromUri(uri)
     }
 
-    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         // Header
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -253,7 +297,7 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
             )
         }
 
-        // 1. Swipeable preview pager. Edit mode = editor Canva (elemen bisa diklik & digeser).
+        // 1. Swipeable preview pager (SELALU tampil di atas). Edit mode = editor Canva.
         HorizontalPager(
             state = pagerState,
             pageSpacing = 12.dp,
@@ -287,11 +331,6 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
                     }
 
                     // Overlay editor kanvas WYSIWYG: hanya pada slide aktif & saat mode edit.
-                    // PENTING: setiap elemen di-anchor ke Alignment.TopStart supaya .offset { } menjadi
-                    // koordinat absolut dari pojok kiri-atas kanvas. Sebelumnya container memakai
-                    // contentAlignment = Center sehingga anak diletakkan di tengah DULU lalu ditambah
-                    // offset -> semua elemen tergeser ~setengah kanvas ke bawah/kanan (parah di layar
-                    // besar/tablet). Anchor TopStart menghilangkan pergeseran itu.
                     if (editMode && page == activeIndex && bmp != null) {
                         design.layoutFor(pageRole).forEach { el ->
                             val display = when (el.element) {
@@ -311,9 +350,6 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
                                 (el.element == CarouselElement.LOGO && design.logoBase64 == null)
                             if (!skip) {
                                 key(el.element) {
-                                    // State transien lokal: posisi (fraksi 0..1) & skala. Kita commit ke
-                                    // ViewModel HANYA saat gesture selesai, supaya background bitmap tidak
-                                    // ikut re-render tiap frame (bebas lag saat menggeser/pinch).
                                     var pos by remember(el.element, el.xFraction, el.yFraction, pageRole) {
                                         mutableStateOf(Offset(el.xFraction, el.yFraction))
                                     }
@@ -343,9 +379,6 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
                                                 else Modifier
                                             )
                                             .pointerInput(el.element, pageRole, boxWpx, boxHpx) {
-                                                // Pola editor gambar umum (mis. PhotoEditor / Canva): satu
-                                                // loop gesture menangani drag 1-jari (pan) DAN pinch 2-jari
-                                                // (zoom -> skala). Commit posisi & skala saat jari diangkat.
                                                 awaitEachGesture {
                                                     awaitFirstDown(requireUnconsumed = false)
                                                     selectedElement = el.element
@@ -384,15 +417,8 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
                                                 }
                                             }
                                             CarouselElement.SWIPE -> {
-                                                val accentSw = hexColor(design.accentColorHex, Color(0xFF38BDF8))
-                                                Row(
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    modifier = Modifier
-                                                        .clip(RoundedCornerShape(50))
-                                                        .background(Color.Black.copy(alpha = 0.55f))
-                                                        .border(1.dp, accentSw, RoundedCornerShape(50))
-                                                        .padding(horizontal = 10.dp, vertical = 5.dp)
-                                                ) {
+                                                // Tanpa background & tanpa garis tepi: teks/ikon polos saja.
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
                                                     if (!design.swipeIconOnly && design.swipeText.isNotBlank()) {
                                                         Text(caseText(design.swipeText, el.case), style = ts.copy(shadow = null))
                                                         if (design.swipeIconBase64 != null || design.swipeIconBuiltin.isNotBlank()) Spacer(Modifier.width(4.dp))
@@ -462,14 +488,16 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
 
         if (editMode) {
             Text(
-                "Editor kanvas: ketuk elemen untuk memilih, geser 1 jari untuk memindah, cubit 2 jari untuk ubah ukuran. Tekan 'Tetapkan Favorit' agar posisi & gaya dipakai ulang oleh mesin.",
+                "Editor kanvas: ketuk elemen untuk memilih, geser 1 jari untuk memindah, cubit 2 jari untuk ubah ukuran.",
                 fontSize = 10.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
 
-        // Slide management + text editor (req 1 reorder)
-        PanelCard("Kelola Slide (geser untuk berpindah)") {
+        // ==== ACCORDION MENU (1 terbuka, semua bisa tertutup) ====
+
+        // A. Konten & Slide
+        AccordionSection("konten", "Konten & Slide", Icons.Default.Edit, expandedSection, onToggle) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = { viewModel.moveSlide(activeIndex, activeIndex - 1) }, enabled = activeIndex > 0) {
                     Icon(Icons.Default.ChevronLeft, contentDescription = "Geser kiri")
@@ -517,8 +545,9 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
             }
         }
 
-        // 2. Aspect ratio
-        PanelCard("Rasio & Ukuran") {
+        // B. Format & Tata Letak
+        AccordionSection("format", "Format & Tata Letak", Icons.Default.AspectRatio, expandedSection, onToggle) {
+            Text("Rasio & Ukuran:", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(CarouselPresets.aspectRatios) { spec ->
                     FilterChip(
@@ -528,10 +557,20 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
                     )
                 }
             }
+            Text("Template Tata Letak (atur posisi semua elemen sekaligus, lalu bebas geser manual):", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                items(CarouselPresets.layoutTemplates) { tpl ->
+                    FilterChip(
+                        selected = design.layoutTemplate == tpl,
+                        onClick = { viewModel.setDesignLayoutTemplate(tpl) },
+                        label = { Text(tpl, fontSize = 10.sp) }
+                    )
+                }
+            }
         }
 
-        // 3. Typography (jenis huruf + model penulisan + efek art) + mini preview + font family
-        PanelCard("Gaya & Tipografi") {
+        // C. Gaya & Tipografi
+        AccordionSection("gaya", "Gaya & Tipografi", Icons.Default.Palette, expandedSection, onToggle) {
             Text("Preset tipografi (model penulisan + efek art):", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(CarouselPresets.typographyStyles) { style ->
@@ -595,22 +634,8 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
             }
         }
 
-        // 3b. Template tata letak (mengatur posisi semua elemen sekaligus)
-        PanelCard("Template Tata Letak") {
-            Text("Atur posisi semua elemen sekaligus, lalu bebas geser manual.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                items(CarouselPresets.layoutTemplates) { tpl ->
-                    FilterChip(
-                        selected = design.layoutTemplate == tpl,
-                        onClick = { viewModel.setDesignLayoutTemplate(tpl) },
-                        label = { Text(tpl, fontSize = 10.sp) }
-                    )
-                }
-            }
-        }
-
-        // 4. Background theme + local file + AI (dengan kolom prompt) + cari gambar internet + preview
-        PanelCard("Tema Visual & Background") {
+        // D. Background & Gambar
+        AccordionSection("background", "Background & Gambar", Icons.Default.Image, expandedSection, onToggle) {
             LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 items(CarouselPresets.backgroundThemes) { t ->
                     FilterChip(
@@ -633,7 +658,7 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
                 OutlinedButton(onClick = { bgPicker.launch("image/*") }, modifier = Modifier.weight(1f)) {
                     Icon(Icons.Default.Image, contentDescription = null, modifier = Modifier.size(14.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("Dari File", fontSize = 10.sp)
+                    Text("Upload", fontSize = 10.sp)
                 }
                 OutlinedButton(onClick = { viewModel.generateBackgroundForSlide(activeIndex) }, enabled = !isGeneratingImg, modifier = Modifier.weight(1f)) {
                     Text("AI: Slide Ini", fontSize = 10.sp)
@@ -657,13 +682,61 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
                 }
             }
 
-            // --- Cari gambar dari internet (Openverse, tanpa AI) ---
+            // --- Galeri background ter-upload (persisten & bisa dipakai ulang) ---
+            HorizontalDivider()
+            Text("Galeri Background Ter-upload:", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Text("Ketuk = pasang slide ini \u2022 tekan lama = semua slide \u2022 X = hapus dari galeri", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (uploadedBgs.isEmpty()) {
+                Text("Belum ada. Gambar yang kamu upload akan tersimpan di sini agar bisa dipakai ulang.", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(uploadedBgs) { b64 ->
+                        val thumb = rememberBase64Image(b64)
+                        Box(
+                            modifier = Modifier
+                                .size(88.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .pointerInput(b64) {
+                                        detectTapGestures(
+                                            onTap = { viewModel.applyUploadedBackgroundToSlide(activeIndex, b64) },
+                                            onLongPress = { viewModel.applyUploadedBackgroundToAllSlides(b64) }
+                                        )
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (thumb != null) {
+                                    Image(bitmap = thumb, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                                } else {
+                                    Icon(Icons.Default.Image, contentDescription = null, modifier = Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(3.dp)
+                                    .size(20.dp)
+                                    .clip(CircleShape)
+                                    .background(Color.Black.copy(alpha = 0.6f))
+                                    .clickable { viewModel.removeUploadedBackground(b64) },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Default.Close, contentDescription = "Hapus", tint = Color.White, modifier = Modifier.size(13.dp))
+                            }
+                        }
+                    }
+                }
+            }
+
+            // --- Cari gambar dari internet ---
             HorizontalDivider()
             Text("Cari Gambar dari Internet (seperti Google Images/Pinterest):", fontSize = 11.sp, fontWeight = FontWeight.Bold)
             Text("Ketik kata kunci (disarankan bahasa Inggris), pilih gambar, langsung jadi background.", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            var imageQuery by remember { mutableStateOf("") }
-            val imageResults by viewModel.imageSearchResults.collectAsState()
-            val isSearchingImages by viewModel.isSearchingImages.collectAsState()
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(
                     value = imageQuery,
@@ -722,128 +795,8 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
             }
         }
 
-        // 5. CTA icon + text
-        PanelCard("Ikon & Teks CTA") {
-            OutlinedTextField(
-                value = design.ctaText,
-                onValueChange = { viewModel.setDesignCtaText(it) },
-                label = { Text("Teks CTA") },
-                modifier = Modifier.fillMaxWidth()
-            )
-            Text("Ikon CTA:", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                items(CarouselPresets.ctaIcons) { icon ->
-                    val selected = design.ctaIcon == icon
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.25f) else MaterialTheme.colorScheme.surfaceVariant,
-                        border = if (selected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null,
-                        modifier = Modifier.clickable { viewModel.setDesignCtaIcon(icon) }
-                    ) {
-                        Text(
-                            if (icon.isBlank()) "(tanpa)" else icon,
-                            fontSize = if (icon.isBlank()) 10.sp else 16.sp,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                        )
-                    }
-                }
-            }
-        }
-
-        // 5b. Indikator geser (swipe) - sepenuhnya bisa dikustom (teks/emoji/PNG/off)
-        PanelCard("Indikator Geser (Swipe)") {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(checked = design.swipeEnabled, onCheckedChange = { viewModel.toggleDesignSwipe() })
-                Text("Tampilkan indikator geser", fontSize = 12.sp)
-            }
-            if (design.swipeEnabled) {
-                OutlinedTextField(
-                    value = design.swipeText,
-                    onValueChange = { viewModel.setDesignSwipeText(it) },
-                    label = { Text("Teks geser (boleh kosong)") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Text("Ikon geser (emoji bawaan):", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    items(CarouselPresets.swipeIcons) { icon ->
-                        val selected = design.swipeIconBase64 == null && design.swipeIconBuiltin == icon
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.25f) else MaterialTheme.colorScheme.surfaceVariant,
-                            border = if (selected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null,
-                            modifier = Modifier.clickable { viewModel.setDesignSwipeBuiltinIcon(icon) }
-                        ) {
-                            Text(
-                                if (icon.isBlank()) "(tanpa)" else icon,
-                                fontSize = if (icon.isBlank()) 10.sp else 16.sp,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                            )
-                        }
-                    }
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = { swipeIconPicker.launch("image/*") }, modifier = Modifier.weight(1f)) {
-                        Icon(Icons.Default.Image, contentDescription = null, modifier = Modifier.size(14.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text(if (design.swipeIconBase64 != null) "Ganti PNG" else "Upload PNG", fontSize = 10.sp)
-                    }
-                    if (design.swipeIconBase64 != null) {
-                        OutlinedButton(onClick = { viewModel.clearSwipeIcon() }, modifier = Modifier.weight(1f)) {
-                            Text("Hapus PNG", fontSize = 10.sp)
-                        }
-                    }
-                }
-                if (design.swipeIconBase64 != null) {
-                    val swipePreview = rememberBase64Image(design.swipeIconBase64)
-                    if (swipePreview != null) {
-                        Image(bitmap = swipePreview, contentDescription = "Ikon geser", modifier = Modifier.size(32.dp))
-                    }
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(checked = design.swipeIconOnly, onCheckedChange = { viewModel.toggleSwipeIconOnly() })
-                    Text("Ikon saja (tanpa teks)", fontSize = 12.sp)
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(checked = design.swipeShowOnLastSlide, onCheckedChange = { viewModel.toggleSwipeShowOnLast() })
-                    Text("Tampilkan juga di slide terakhir", fontSize = 12.sp)
-                }
-                Text(
-                    "Indikator geser kini elemen mandiri: ketuk 'Geser' di daftar elemen di bawah untuk memindah/mengatur ukuran & warnanya seperti elemen lain.",
-                    fontSize = 10.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-
-        // 6. Logo & watermark
-        PanelCard("Logo & Watermark") {
-            OutlinedTextField(
-                value = design.watermarkText,
-                onValueChange = { viewModel.setDesignWatermark(it) },
-                label = { Text("Teks Watermark (kosongkan = tanpa watermark)") },
-                modifier = Modifier.fillMaxWidth()
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { viewModel.setWatermarkFromPersona() }, modifier = Modifier.weight(1f)) {
-                    Text("Dari Persona", fontSize = 10.sp)
-                }
-                OutlinedButton(onClick = { logoPicker.launch("image/*") }, modifier = Modifier.weight(1f)) {
-                    Text(if (design.logoBase64 != null) "Ganti Logo" else "Pilih Logo", fontSize = 10.sp)
-                }
-                if (design.logoBase64 != null) {
-                    OutlinedButton(onClick = { viewModel.clearLogo() }, modifier = Modifier.weight(1f)) {
-                        Text("Hapus Logo", fontSize = 10.sp)
-                    }
-                }
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(checked = design.showPageNumber, onCheckedChange = { viewModel.toggleDesignPageNumber() })
-                Text("Tampilkan nomor halaman", fontSize = 12.sp)
-            }
-        }
-
-        // 7 & 8. Text & element settings + case/effect + drag/assign
-        PanelCard("Pengaturan Teks & Elemen") {
+        // E. Teks & Elemen
+        AccordionSection("teks", "Teks & Elemen", Icons.Default.TextFields, expandedSection, onToggle) {
             Text("Peran slide aktif: ${roleLabel(role)}", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
             Text("Pilih elemen (atau ketuk & geser langsung di preview):", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -918,6 +871,15 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
                     Checkbox(checked = current.visible, onCheckedChange = { viewModel.toggleElementVisible(role, selectedElement) })
                     Text("Tampilkan elemen ini", fontSize = 12.sp)
                 }
+                // Terapkan gaya elemen ini ke semua peran (HOOK/ISI/CTA)
+                OutlinedButton(
+                    onClick = { viewModel.applyElementStyleToAllRoles(role, selectedElement) },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Terapkan gaya elemen ini ke semua peran (HOOK/ISI/CTA)", fontSize = 10.sp)
+                }
             }
             HorizontalDivider()
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -928,10 +890,166 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
             }
         }
 
-        // 8 & 9. Assign positions & automation
-        PanelCard("Penetapan Posisi & Otomatis") {
+        // F. CTA, Logo & Geser
+        AccordionSection("elemen2", "CTA, Logo & Geser", Icons.Default.Widgets, expandedSection, onToggle) {
+            // CTA
+            OutlinedTextField(
+                value = design.ctaText,
+                onValueChange = { viewModel.setDesignCtaText(it) },
+                label = { Text("Teks CTA") },
+                modifier = Modifier.fillMaxWidth()
+            )
+            Text("Ikon CTA:", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                items(CarouselPresets.ctaIcons) { icon ->
+                    val selected = design.ctaIcon == icon
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.25f) else MaterialTheme.colorScheme.surfaceVariant,
+                        border = if (selected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null,
+                        modifier = Modifier.clickable { viewModel.setDesignCtaIcon(icon) }
+                    ) {
+                        Text(
+                            if (icon.isBlank()) "(tanpa)" else icon,
+                            fontSize = if (icon.isBlank()) 10.sp else 16.sp,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                        )
+                    }
+                }
+            }
+            HorizontalDivider()
+            // Indikator geser (swipe)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = design.swipeEnabled, onCheckedChange = { viewModel.toggleDesignSwipe() })
+                Text("Tampilkan indikator geser", fontSize = 12.sp)
+            }
+            if (design.swipeEnabled) {
+                Text("Tampil polos: tanpa background & tanpa garis tepi (hanya teks/ikon).", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                OutlinedTextField(
+                    value = design.swipeText,
+                    onValueChange = { viewModel.setDesignSwipeText(it) },
+                    label = { Text("Teks geser (boleh kosong)") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text("Ikon geser (emoji bawaan):", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(CarouselPresets.swipeIcons) { icon ->
+                        val selected = design.swipeIconBase64 == null && design.swipeIconBuiltin == icon
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.25f) else MaterialTheme.colorScheme.surfaceVariant,
+                            border = if (selected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null,
+                            modifier = Modifier.clickable { viewModel.setDesignSwipeBuiltinIcon(icon) }
+                        ) {
+                            Text(
+                                if (icon.isBlank()) "(tanpa)" else icon,
+                                fontSize = if (icon.isBlank()) 10.sp else 16.sp,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                            )
+                        }
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { swipeIconPicker.launch("image/*") }, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Default.Image, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text(if (design.swipeIconBase64 != null) "Ganti PNG" else "Upload PNG", fontSize = 10.sp)
+                    }
+                    if (design.swipeIconBase64 != null) {
+                        OutlinedButton(onClick = { viewModel.clearSwipeIcon() }, modifier = Modifier.weight(1f)) {
+                            Text("Hapus PNG", fontSize = 10.sp)
+                        }
+                    }
+                }
+                if (design.swipeIconBase64 != null) {
+                    val swipePreview = rememberBase64Image(design.swipeIconBase64)
+                    if (swipePreview != null) {
+                        Image(bitmap = swipePreview, contentDescription = "Ikon geser", modifier = Modifier.size(32.dp))
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = design.swipeIconOnly, onCheckedChange = { viewModel.toggleSwipeIconOnly() })
+                    Text("Ikon saja (tanpa teks)", fontSize = 12.sp)
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = design.swipeShowOnLastSlide, onCheckedChange = { viewModel.toggleSwipeShowOnLast() })
+                    Text("Tampilkan juga di slide terakhir", fontSize = 12.sp)
+                }
+            }
+            HorizontalDivider()
+            // Logo & watermark
+            OutlinedTextField(
+                value = design.watermarkText,
+                onValueChange = { viewModel.setDesignWatermark(it) },
+                label = { Text("Teks Watermark (kosongkan = tanpa watermark)") },
+                modifier = Modifier.fillMaxWidth()
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { viewModel.setWatermarkFromPersona() }, modifier = Modifier.weight(1f)) {
+                    Text("Dari Persona", fontSize = 10.sp)
+                }
+                OutlinedButton(onClick = { logoPicker.launch("image/*") }, modifier = Modifier.weight(1f)) {
+                    Text(if (design.logoBase64 != null) "Ganti Logo" else "Pilih Logo", fontSize = 10.sp)
+                }
+                if (design.logoBase64 != null) {
+                    OutlinedButton(onClick = { viewModel.clearLogo() }, modifier = Modifier.weight(1f)) {
+                        Text("Hapus Logo", fontSize = 10.sp)
+                    }
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = design.showPageNumber, onCheckedChange = { viewModel.toggleDesignPageNumber() })
+                Text("Tampilkan nomor halaman", fontSize = 12.sp)
+            }
+        }
+
+        // G. Gaya Tersimpan & Otomatis
+        AccordionSection("gaya_tersimpan", "Gaya Tersimpan & Otomatis", Icons.Default.Star, expandedSection, onToggle) {
+            Text("Simpan Gaya (semua pengaturan desain saat ini disimpan dengan nama & bisa dipakai ulang):", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = styleName,
+                    onValueChange = { styleName = it },
+                    label = { Text("Nama gaya") },
+                    placeholder = { Text("mis. Gaya Tech Biru", fontSize = 11.sp) },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+                Button(onClick = { viewModel.saveCurrentDesignAsStyle(styleName); styleName = "" }) {
+                    Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Simpan", fontSize = 10.sp)
+                }
+            }
+            if (savedStyles.isNotEmpty()) {
+                Text("Gaya tersimpan (ketuk = pakai, X = hapus):", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(savedStyles) { s ->
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier.clickable { viewModel.applySavedStyle(s.name) }
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 12.dp, end = 6.dp, top = 6.dp, bottom = 6.dp)) {
+                                Text(s.name, fontSize = 11.sp)
+                                Spacer(Modifier.width(6.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .size(18.dp)
+                                        .clip(CircleShape)
+                                        .clickable { viewModel.deleteSavedStyle(s.name) },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(Icons.Default.Close, contentDescription = "Hapus gaya", modifier = Modifier.size(14.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            HorizontalDivider()
             Text(
-                "Posisi & gaya disimpan per-peran (HOOK/ISI/CTA) lalu dipakai ulang saat konten di-generate mesin (isi & background saja yang berganti).",
+                "Posisi & gaya disimpan per-peran (HOOK/ISI/CTA) lalu dipakai ulang saat konten di-generate mesin.",
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -957,7 +1075,7 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
             }
         }
 
-        // Generate text + download
+        // ==== Aksi utama (SELALU tampil) ====
         Button(
             onClick = { viewModel.generateCarouselSlidesFromCurrent(title, hook, slides.size.coerceAtLeast(3)) },
             enabled = !isGeneratingAi,
