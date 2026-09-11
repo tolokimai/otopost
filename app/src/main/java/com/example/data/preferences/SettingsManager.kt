@@ -99,3 +99,18 @@ class SettingsManager(context: Context) {
         val customKey = _settings.value.geminiApiKey
         if (customKey.isNotBlank()) return customKey
         return try {
+            BuildConfig.GEMINI_API_KEY
+        } catch (e: Exception) {
+            ""
+        }
+    }
+
+    /** Memuat desain carousel favorit/default yang tersimpan (atau default bawaan). */
+    fun loadFavoriteCarouselDesign(): CarouselDesign =
+        CarouselDesign.fromJsonString(_settings.value.carouselDesignJson)
+
+    /** Menyimpan desain carousel sebagai favorit/default untuk dipakai konten berikutnya. */
+    fun saveFavoriteCarouselDesign(design: CarouselDesign) {
+        updateSettings(_settings.value.copy(carouselDesignJson = design.toJsonString()))
+    }
+}
