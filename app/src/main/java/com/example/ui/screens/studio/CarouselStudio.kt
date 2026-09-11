@@ -7,7 +7,11 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -282,7 +286,12 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
                         CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 2.dp)
                     }
 
-                    // Overlay elemen Canva: hanya pada slide aktif & saat mode edit.
+                    // Overlay editor kanvas WYSIWYG: hanya pada slide aktif & saat mode edit.
+                    // PENTING: setiap elemen di-anchor ke Alignment.TopStart supaya .offset { } menjadi
+                    // koordinat absolut dari pojok kiri-atas kanvas. Sebelumnya container memakai
+                    // contentAlignment = Center sehingga anak diletakkan di tengah DULU lalu ditambah
+                    // offset -> semua elemen tergeser ~setengah kanvas ke bawah/kanan (parah di layar
+                    // besar/tablet). Anchor TopStart menghilangkan pergeseran itu.
                     if (editMode && page == activeIndex && bmp != null) {
                         design.layoutFor(pageRole).forEach { el ->
                             val display = when (el.element) {
@@ -302,18 +311,25 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
                                 (el.element == CarouselElement.LOGO && design.logoBase64 == null)
                             if (!skip) {
                                 key(el.element) {
+                                    // State transien lokal: posisi (fraksi 0..1) & skala. Kita commit ke
+                                    // ViewModel HANYA saat gesture selesai, supaya background bitmap tidak
+                                    // ikut re-render tiap frame (bebas lag saat menggeser/pinch).
                                     var pos by remember(el.element, el.xFraction, el.yFraction, pageRole) {
                                         mutableStateOf(Offset(el.xFraction, el.yFraction))
+                                    }
+                                    var scale by remember(el.element, el.fontScale, pageRole) {
+                                        mutableStateOf(el.fontScale)
                                     }
                                     var elemSize by remember(el.element) { mutableStateOf(IntSize.Zero) }
                                     val selected = selectedElement == el.element
                                     val elWidthDp = maxWidth * el.widthFraction
-                                    val sizePx = boxWpx * 0.052f * design.baseFontScale * el.fontScale
+                                    val sizePx = boxWpx * 0.052f * design.baseFontScale * scale
                                     val fontSizeSp = with(density) { sizePx.toSp() }
                                     val ts = styleForElement(el, design, fontSizeSp, sizePx)
 
                                     Box(
                                         modifier = Modifier
+                                            .align(Alignment.TopStart)
                                             .offset {
                                                 IntOffset(
                                                     (pos.x * boxWpx - elemSize.width / 2f).roundToInt(),
@@ -326,17 +342,31 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
                                                 if (selected) Modifier.border(1.5.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(6.dp))
                                                 else Modifier
                                             )
-                                            .clickable { selectedElement = el.element }
                                             .pointerInput(el.element, pageRole, boxWpx, boxHpx) {
-                                                detectDragGestures(
-                                                    onDragStart = { selectedElement = el.element },
-                                                    onDragEnd = { viewModel.setElementPosition(pageRole, el.element, pos.x, pos.y) }
-                                                ) { change, drag ->
-                                                    change.consume()
-                                                    pos = Offset(
-                                                        (pos.x + drag.x / boxWpx).coerceIn(0f, 1f),
-                                                        (pos.y + drag.y / boxHpx).coerceIn(0f, 1f)
-                                                    )
+                                                // Pola editor gambar umum (mis. PhotoEditor / Canva): satu
+                                                // loop gesture menangani drag 1-jari (pan) DAN pinch 2-jari
+                                                // (zoom -> skala). Commit posisi & skala saat jari diangkat.
+                                                awaitEachGesture {
+                                                    awaitFirstDown(requireUnconsumed = false)
+                                                    selectedElement = el.element
+                                                    while (true) {
+                                                        val event = awaitPointerEvent()
+                                                        val panChange = event.calculatePan()
+                                                        val zoomChange = event.calculateZoom()
+                                                        if (panChange != Offset.Zero) {
+                                                            pos = Offset(
+                                                                (pos.x + panChange.x / boxWpx).coerceIn(0f, 1f),
+                                                                (pos.y + panChange.y / boxHpx).coerceIn(0f, 1f)
+                                                            )
+                                                        }
+                                                        if (zoomChange != 1f) {
+                                                            scale = (scale * zoomChange).coerceIn(0.4f, 3f)
+                                                        }
+                                                        event.changes.forEach { if (it.pressed) it.consume() }
+                                                        if (event.changes.none { it.pressed }) break
+                                                    }
+                                                    viewModel.setElementPosition(pageRole, el.element, pos.x, pos.y)
+                                                    viewModel.setElementScale(pageRole, el.element, scale)
                                                 }
                                             }
                                             .padding(2.dp)
@@ -432,7 +462,7 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
 
         if (editMode) {
             Text(
-                "Canva-style: ketuk elemen lalu geser langsung untuk memindahnya. Tekan 'Tetapkan Favorit' agar posisi & gaya dipakai ulang oleh mesin.",
+                "Editor kanvas: ketuk elemen untuk memilih, geser 1 jari untuk memindah, cubit 2 jari untuk ubah ukuran. Tekan 'Tetapkan Favorit' agar posisi & gaya dipakai ulang oleh mesin.",
                 fontSize = 10.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -579,7 +609,7 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
             }
         }
 
-        // 4. Background theme + local file + AI (dengan kolom prompt) + preview
+        // 4. Background theme + local file + AI (dengan kolom prompt) + cari gambar internet + preview
         PanelCard("Tema Visual & Background") {
             LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 items(CarouselPresets.backgroundThemes) { t ->
@@ -624,6 +654,70 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
                     CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
                     Spacer(Modifier.width(6.dp))
                     Text("Memproses background...", fontSize = 11.sp)
+                }
+            }
+
+            // --- Cari gambar dari internet (Openverse, tanpa AI) ---
+            HorizontalDivider()
+            Text("Cari Gambar dari Internet (seperti Google Images/Pinterest):", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Text("Ketik kata kunci (disarankan bahasa Inggris), pilih gambar, langsung jadi background.", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            var imageQuery by remember { mutableStateOf("") }
+            val imageResults by viewModel.imageSearchResults.collectAsState()
+            val isSearchingImages by viewModel.isSearchingImages.collectAsState()
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = imageQuery,
+                    onValueChange = { imageQuery = it },
+                    label = { Text("Kata kunci gambar") },
+                    placeholder = { Text("mis. mountain sunset minimal", fontSize = 11.sp) },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+                Button(onClick = { viewModel.searchBackgroundImages(imageQuery) }, enabled = !isSearchingImages) {
+                    Icon(Icons.Default.Search, contentDescription = "Cari", modifier = Modifier.size(16.dp))
+                }
+            }
+            if (isSearchingImages) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(6.dp))
+                    Text("Mencari gambar dari internet...", fontSize = 11.sp)
+                }
+            }
+            if (imageResults.isNotEmpty()) {
+                Text("Ketuk = pasang di slide ini \u2022 tekan lama = semua slide", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(imageResults) { img ->
+                        val thumb = rememberBase64Image(img.thumbBase64)
+                        Box(
+                            modifier = Modifier
+                                .size(88.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
+                                .pointerInput(img.fullUrl) {
+                                    detectTapGestures(
+                                        onTap = { viewModel.applySearchImageToSlide(activeIndex, img.fullUrl) },
+                                        onLongPress = { viewModel.applySearchImageToAllSlides(img.fullUrl) }
+                                    )
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (thumb != null) {
+                                Image(
+                                    bitmap = thumb,
+                                    contentDescription = img.title,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            } else {
+                                Icon(Icons.Default.Image, contentDescription = null, modifier = Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                }
+                TextButton(onClick = { viewModel.clearImageSearch() }) {
+                    Text("Bersihkan hasil pencarian", fontSize = 10.sp)
                 }
             }
         }
