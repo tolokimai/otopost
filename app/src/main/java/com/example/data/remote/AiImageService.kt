@@ -28,12 +28,14 @@ data class AiImageResult(
 /**
  * Service khusus generate GAMBAR (bukan teks) via Google Generative Language API.
  *
- * PENTING (penyebab error 404 sebelumnya): model "gemini-2.5-flash-image-preview"
- * SUDAH DIMATIKAN oleh Google, sehingga endpoint-nya selalu balas 404 Not Found.
- * Model image-generation yang aktif sekarang adalah versi GA: "gemini-2.5-flash-image"
- * (alias "Nano Banana"). Kita coba model GA dulu, lalu beberapa fallback, lalu Imagen.
+ * Model image-generation aktif saat ini adalah versi GA: "gemini-2.5-flash-image"
+ * (alias "Nano Banana"). User bisa memilih model lewat [getPreferredModel] (Settings);
+ * bila kosong, kita pakai urutan default lalu fallback ke Imagen.
  */
-class AiImageService(private val getApiKey: () -> String) {
+class AiImageService(
+    private val getApiKey: () -> String,
+    private val getPreferredModel: () -> String = { "" }
+) {
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
@@ -68,8 +70,15 @@ class AiImageService(private val getApiKey: () -> String) {
         val normalizedRatio = normalizeRatio(aspectRatio)
         val errors = StringBuilder()
 
+        val preferred = getPreferredModel().trim()
+        // Susun urutan model Gemini native-image: model pilihan user (bila bukan Imagen) didahulukan.
+        val geminiModels = buildList {
+            if (preferred.isNotBlank() && !preferred.contains("imagen", ignoreCase = true)) add(preferred)
+            addAll(imageGenModels)
+        }.distinct()
+
         // --- Percobaan model generateContent (Gemini native image) ---
-        for (model in imageGenModels) {
+        for (model in geminiModels) {
             try {
                 val res = tryGeminiImage(model, prompt, apiKey)
                 if (res != null) return@withContext AiImageResult(
@@ -83,24 +92,25 @@ class AiImageService(private val getApiKey: () -> String) {
             }
         }
 
-        // --- Fallback terakhir: Imagen 3 (endpoint :predict) ---
+        // --- Fallback terakhir: Imagen (endpoint :predict) ---
+        val imagenModel = if (preferred.isNotBlank() && preferred.contains("imagen", ignoreCase = true)) preferred else "imagen-3.0-generate-002"
         try {
-            val res = tryImagen("imagen-3.0-generate-002", prompt, normalizedRatio, apiKey)
+            val res = tryImagen(imagenModel, prompt, normalizedRatio, apiKey)
             if (res != null) return@withContext AiImageResult(
                 base64 = res,
                 isAiGenerated = true,
-                modelUsed = "imagen-3.0-generate-002"
+                modelUsed = imagenModel
             )
         } catch (e: Exception) {
             Log.w("AiImageService", "Imagen gagal", e)
-            errors.append("imagen-3.0-generate-002: ${e.message}; ")
+            errors.append("$imagenModel: ${e.message}; ")
         }
 
         val detail = errors.toString()
         val reason = buildString {
             append("Semua model gambar menolak permintaan. ")
             when {
-                detail.contains("404") -> append("Model tidak tersedia untuk API key ini (404) - kemungkinan key belum punya akses ke image generation (Gemini 2.5 Flash Image / Imagen) atau butuh billing aktif. ")
+                detail.contains("404") -> append("Model tidak tersedia untuk API key ini (404) - kemungkinan key belum punya akses ke image generation (Gemini 2.5 Flash Image / Imagen) atau butuh billing aktif. Coba ganti model di Settings. ")
                 detail.contains("403") || detail.contains("PERMISSION") -> append("Akses ditolak (403): API key belum diizinkan memakai model gambar. ")
                 detail.contains("429") -> append("Kuota habis (429): coba lagi nanti. ")
             }

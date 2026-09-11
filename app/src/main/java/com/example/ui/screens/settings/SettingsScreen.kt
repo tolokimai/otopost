@@ -4,8 +4,10 @@ import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -38,6 +40,9 @@ fun SettingsScreen(
     var tikTokKey by remember(currentSettings) { mutableStateOf(currentSettings.tikTokApiKey) }
     var metaToken by remember(currentSettings) { mutableStateOf(currentSettings.metaAccessToken) }
     var youTubeKey by remember(currentSettings) { mutableStateOf(currentSettings.youTubeApiKey) }
+    var openverseId by remember(currentSettings) { mutableStateOf(currentSettings.openverseClientId) }
+    var openverseSecret by remember(currentSettings) { mutableStateOf(currentSettings.openverseClientSecret) }
+    var geminiImageModel by remember(currentSettings) { mutableStateOf(currentSettings.geminiImageModel) }
 
     var isTikTokConnected by remember(currentSettings) { mutableStateOf(currentSettings.isTikTokConnected) }
     var isInstagramConnected by remember(currentSettings) { mutableStateOf(currentSettings.isInstagramConnected) }
@@ -116,7 +121,7 @@ fun SettingsScreen(
                             color = MaterialTheme.colorScheme.primaryContainer
                         ) {
                             Text(
-                                text = "Gemini 3.5 Flash",
+                                text = "AI Engine",
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer,
@@ -144,6 +149,76 @@ fun SettingsScreen(
                         )
                         Text(
                             text = "Kunci otomatis terisi dari Secrets Environment (.env / BuildConfig) jika tersedia.",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    // --- Pemilihan Model Gambar Gemini (mengatasi isu model 2.5/3.5 no longer) ---
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            text = "Model Gambar AI (untuk generate background carousel):",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        val imageModelPresets = listOf(
+                            "" to "Otomatis",
+                            "gemini-2.5-flash-image" to "2.5 Flash Image",
+                            "gemini-2.0-flash-preview-image-generation" to "2.0 Flash Image",
+                            "imagen-3.0-generate-002" to "Imagen 3"
+                        )
+                        Row(
+                            modifier = Modifier.horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            imageModelPresets.forEach { (value, label) ->
+                                FilterChip(
+                                    selected = geminiImageModel.trim() == value,
+                                    onClick = { geminiImageModel = value },
+                                    label = { Text(label, fontSize = 11.sp) }
+                                )
+                            }
+                        }
+                        OutlinedTextField(
+                            value = geminiImageModel,
+                            onValueChange = { geminiImageModel = it },
+                            label = { Text("Model kustom (opsional, lanjutan)") },
+                            placeholder = { Text("cth: gemini-2.5-flash-image") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Text(
+                            text = "Kosongkan = otomatis pilih model terbaik. Ganti model jika muncul error 'model no longer available' atau 404. Fitur gambar butuh API key dengan akses image generation (kadang perlu billing aktif).",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    // --- Openverse (Cari Gambar Internet) client_id & client_secret ---
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            text = "Openverse (Cari Gambar Internet):",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        OutlinedTextField(
+                            value = openverseId,
+                            onValueChange = { openverseId = it },
+                            label = { Text("Openverse client_id") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = openverseSecret,
+                            onValueChange = { openverseSecret = it },
+                            label = { Text("Openverse client_secret") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Text(
+                            text = "Opsional. Daftar gratis di api.openverse.org (v1/auth_tokens/register) untuk hasil pencarian gambar lebih banyak & stabil. Tanpa ini, pencarian tetap jalan via Wikimedia Commons.",
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -392,7 +467,10 @@ fun SettingsScreen(
                             isFacebookConnected = isFacebookConnected,
                             defaultPostHour = postHour,
                             defaultPostMinute = postMinute,
-                            autoRetryOnError = autoRetry
+                            autoRetryOnError = autoRetry,
+                            openverseClientId = openverseId,
+                            openverseClientSecret = openverseSecret,
+                            geminiImageModel = geminiImageModel
                         )
                     )
                 },
@@ -507,13 +585,13 @@ fun ApiGuideDialog(onDismiss: () -> Unit) {
             ) {
                 item {
                     Text(
-                        text = "1. Google Gemini API (Teks & Ide)",
+                        text = "1. Google Gemini API (Teks & Gambar)",
                         fontWeight = FontWeight.Bold,
                         fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.primary
                     )
                     Text(
-                        text = "• Model: gemini-3.5-flash (sangat cepat & hemat kuota).\n• Biaya: Tersedia tier gratis di Google AI Studio (hingga 15 RPM). Cukup dapatkan API key gratis di aistudio.google.com.",
+                        text = "• Teks: model Gemini terbaru (cepat & hemat kuota) untuk ide, caption, & transkrip.\n• Gambar: model bisa dipilih di atas (Gemini 2.5 Flash Image / Imagen 3). Jika satu model error 'no longer available' atau 404, ganti model atau biarkan Otomatis.\n• Biaya: tersedia tier gratis di aistudio.google.com. Fitur GAMBAR AI butuh API key dengan akses image generation, kadang perlu billing aktif.",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -521,7 +599,21 @@ fun ApiGuideDialog(onDismiss: () -> Unit) {
 
                 item {
                     Text(
-                        text = "2. TikTok Content Posting API",
+                        text = "2. Cari Gambar Internet (Openverse)",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = "• Isi client_id & client_secret Openverse (daftar gratis di api.openverse.org) agar hasil pencarian lebih banyak & stabil.\n• Tanpa kredensial, pencarian tetap berjalan via Wikimedia Commons (gratis, tanpa key).",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                item {
+                    Text(
+                        text = "3. TikTok Content Posting API",
                         fontWeight = FontWeight.Bold,
                         fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.primary
@@ -535,7 +627,7 @@ fun ApiGuideDialog(onDismiss: () -> Unit) {
 
                 item {
                     Text(
-                        text = "3. Meta / Instagram Graph API",
+                        text = "4. Meta / Instagram Graph API",
                         fontWeight = FontWeight.Bold,
                         fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.primary
@@ -549,7 +641,7 @@ fun ApiGuideDialog(onDismiss: () -> Unit) {
 
                 item {
                     Text(
-                        text = "4. YouTube Data API v3",
+                        text = "5. YouTube Data API v3",
                         fontWeight = FontWeight.Bold,
                         fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.primary

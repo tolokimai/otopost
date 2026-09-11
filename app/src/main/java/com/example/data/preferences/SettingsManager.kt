@@ -31,7 +31,10 @@ data class AppSettings(
     val autoRetryOnError: Boolean = true,
     val carouselDesignJson: String = "", // Desain carousel favorit/default (JSON)
     val uploadedBackgroundsJson: String = "", // Galeri background yang pernah di-upload (JSON array base64)
-    val savedStylesJson: String = "" // Gaya carousel tersimpan bernama (JSON array {name, design})
+    val savedStylesJson: String = "", // Gaya carousel tersimpan bernama (JSON array {name, design})
+    val openverseClientId: String = "", // Openverse OAuth client_id (opsional, untuk cari gambar internet)
+    val openverseClientSecret: String = "", // Openverse OAuth client_secret (opsional)
+    val geminiImageModel: String = "" // Model gambar Gemini pilihan user (kosong = otomatis)
 )
 
 /** Satu gaya carousel tersimpan yang bisa diberi nama & dipakai ulang. */
@@ -77,7 +80,10 @@ class SettingsManager(context: Context) {
             autoRetryOnError = prefs.getBoolean("auto_retry", true),
             carouselDesignJson = prefs.getString("carousel_design_json", "") ?: "",
             uploadedBackgroundsJson = prefs.getString("uploaded_backgrounds_json", "") ?: "",
-            savedStylesJson = prefs.getString("saved_styles_json", "") ?: ""
+            savedStylesJson = prefs.getString("saved_styles_json", "") ?: "",
+            openverseClientId = prefs.getString("openverse_client_id", "") ?: "",
+            openverseClientSecret = prefs.getString("openverse_client_secret", "") ?: "",
+            geminiImageModel = prefs.getString("gemini_image_model", "") ?: ""
         )
     }
 
@@ -104,6 +110,9 @@ class SettingsManager(context: Context) {
             putString("carousel_design_json", newSettings.carouselDesignJson)
             putString("uploaded_backgrounds_json", newSettings.uploadedBackgroundsJson)
             putString("saved_styles_json", newSettings.savedStylesJson)
+            putString("openverse_client_id", newSettings.openverseClientId)
+            putString("openverse_client_secret", newSettings.openverseClientSecret)
+            putString("gemini_image_model", newSettings.geminiImageModel)
             apply()
         }
         _settings.value = newSettings
@@ -118,6 +127,9 @@ class SettingsManager(context: Context) {
             ""
         }
     }
+
+    /** Model gambar Gemini pilihan user (kosong = biarkan service memakai urutan default). */
+    fun getEffectiveGeminiImageModel(): String = _settings.value.geminiImageModel.trim()
 
     /** Memuat desain carousel favorit/default yang tersimpan (atau default bawaan). */
     fun loadFavoriteCarouselDesign(): CarouselDesign =

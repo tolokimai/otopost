@@ -76,7 +76,7 @@ object CarouselRenderer {
                 CarouselElement.SUBTEXT -> if (slide.subtext.isNotBlank()) drawPill(canvas, w, h, slide.subtext, el, design, baseSizePx)
                 CarouselElement.CTA -> {
                     val txt = (design.ctaText + (if (design.ctaIcon.isNotBlank()) " " + design.ctaIcon else "")).trim()
-                    if (txt.isNotBlank()) drawPill(canvas, w, h, txt, el, design, baseSizePx)
+                    if (txt.isNotBlank()) drawTextBox(canvas, w, h, txt, el, design, baseSizePx)
                 }
                 CarouselElement.WATERMARK -> if (design.watermarkText.isNotBlank()) drawTextBox(canvas, w, h, design.watermarkText, el, design, baseSizePx)
                 CarouselElement.PAGE_NUMBER -> if (design.showPageNumber) drawTextBox(canvas, w, h, String.format("%02d / %02d", slideNumber, totalSlides), el, design, baseSizePx)

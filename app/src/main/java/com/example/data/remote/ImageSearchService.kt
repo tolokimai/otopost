@@ -4,6 +4,7 @@ import android.util.Base64
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
@@ -28,15 +29,13 @@ data class WebImageResult(
 /**
  * Pencarian gambar dari internet ala Google Images / Pinterest.
  *
- * KENAPA DULU ERROR "Tidak ada gambar untuk 'night'": sumber lama (Openverse)
- * kini MEWAJIBKAN token otentikasi untuk API-nya, sehingga permintaan anonim
- * dari app selalu ditolak -> hasil kosong.
- *
- * SOLUSI: sumber UTAMA sekarang Wikimedia Commons yang benar-benar tanpa API key
- * & stabil (ratusan juta gambar berlisensi bebas). Openverse tetap dicoba sebagai
- * cadangan best-effort kalau Commons kosong.
+ * Sumber utama: Wikimedia Commons (tanpa API key, stabil). Openverse dipakai
+ * bila user mengisi client_id & client_secret di Settings -> kita ambil access
+ * token via client_credentials lalu kirim header Authorization: Bearer.
  */
-class ImageSearchService {
+class ImageSearchService(
+    private val getOpenverseCreds: () -> Pair<String, String>? = { null }
+) {
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
@@ -46,20 +45,42 @@ class ImageSearchService {
     // Wikimedia mewajibkan User-Agent deskriptif dengan kontak.
     private val userAgent = "AutoPostStudio/1.0 (Android; https://autopost.studio; contact: app@autopost.studio)"
 
+    // Cache token Openverse supaya tidak minta token tiap pencarian.
+    @Volatile private var cachedToken: String? = null
+    @Volatile private var tokenExpiryMs: Long = 0L
+
     suspend fun search(query: String, pageSize: Int = 24): List<WebImageResult> = withContext(Dispatchers.IO) {
         val q = query.trim()
         if (q.isBlank()) return@withContext emptyList()
+
+        val creds = getOpenverseCreds()
+        val hasCreds = creds != null && creds.first.isNotBlank() && creds.second.isNotBlank()
+
+        // Bila ada kredensial Openverse, dahulukan Openverse (terautentikasi).
+        if (hasCreds) {
+            val ov = try {
+                searchOpenverse(q, pageSize)
+            } catch (e: Exception) {
+                Log.w("ImageSearchService", "Openverse gagal", e); emptyList()
+            }
+            if (ov.isNotEmpty()) return@withContext ov
+        }
+
         val commons = try {
             searchWikimediaCommons(q, pageSize)
         } catch (e: Exception) {
             Log.w("ImageSearchService", "Commons gagal", e); emptyList()
         }
         if (commons.isNotEmpty()) return@withContext commons
-        try {
-            searchOpenverse(q, pageSize)
-        } catch (e: Exception) {
-            Log.w("ImageSearchService", "Openverse gagal", e); emptyList()
-        }
+
+        // Upaya terakhir: Openverse anonim (best-effort) bila belum dicoba.
+        if (!hasCreds) {
+            try {
+                searchOpenverse(q, pageSize)
+            } catch (e: Exception) {
+                Log.w("ImageSearchService", "Openverse gagal", e); emptyList()
+            }
+        } else emptyList()
     }
 
     private fun searchWikimediaCommons(query: String, pageSize: Int): List<WebImageResult> {
@@ -111,16 +132,57 @@ class ImageSearchService {
         }
     }
 
+    /** Ambil (atau pakai cache) access token Openverse via client_credentials. Null bila tak ada kredensial/gagal. */
+    private fun getOpenverseToken(): String? {
+        val creds = getOpenverseCreds() ?: return null
+        val (id, secret) = creds
+        if (id.isBlank() || secret.isBlank()) return null
+        val now = System.currentTimeMillis()
+        val existing = cachedToken
+        if (existing != null && now < tokenExpiryMs - 60_000L) return existing
+        return try {
+            val form = FormBody.Builder()
+                .add("grant_type", "client_credentials")
+                .add("client_id", id)
+                .add("client_secret", secret)
+                .build()
+            val request = Request.Builder()
+                .url("https://api.openverse.org/v1/auth_tokens/token/")
+                .header("User-Agent", userAgent)
+                .header("Accept", "application/json")
+                .post(form)
+                .build()
+            client.newCall(request).execute().use { response ->
+                val raw = response.body?.string() ?: ""
+                if (!response.isSuccessful) {
+                    Log.w("ImageSearchService", "Token Openverse HTTP " + response.code + ": " + raw.take(160))
+                    return null
+                }
+                val json = JSONObject(raw)
+                val token = json.optString("access_token")
+                val expiresIn = json.optLong("expires_in", 3600L)
+                if (token.isBlank()) return null
+                cachedToken = token
+                tokenExpiryMs = System.currentTimeMillis() + expiresIn * 1000L
+                token
+            }
+        } catch (e: Exception) {
+            Log.w("ImageSearchService", "Gagal ambil token Openverse", e)
+            null
+        }
+    }
+
     private fun searchOpenverse(query: String, pageSize: Int): List<WebImageResult> {
         val encoded = URLEncoder.encode(query, "UTF-8")
         val size = pageSize.coerceIn(1, 40)
         val url = "https://api.openverse.org/v1/images/?q=" + encoded + "&page_size=" + size + "&mature=false"
-        val request = Request.Builder()
+        val token = getOpenverseToken()
+        val builder = Request.Builder()
             .url(url)
             .header("User-Agent", userAgent)
             .header("Accept", "application/json")
-            .get()
-            .build()
+        if (!token.isNullOrBlank()) builder.header("Authorization", "Bearer " + token)
+        val request = builder.get().build()
         client.newCall(request).execute().use { response ->
             val raw = response.body?.string() ?: ""
             if (!response.isSuccessful) {

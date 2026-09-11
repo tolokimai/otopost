@@ -750,8 +750,8 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    // AI generate background: kini benar-benar memanggil model gambar (AiImageService).
-    // Jika AI GAGAL, kita TIDAK menimpa background & memberi pesan jujur berisi alasan.
+    // AI generate background sebagai "tools pintar": coba AI dulu; jika gagal/tidak tersedia
+    // otomatis fallback ke gambar internet (disimpan ke galeri), lalu ke galeri lokal tersimpan.
     fun generateBackgroundForSlide(index: Int) {
         viewModelScope.launch {
             val list = _carouselSlides.value.toMutableList()
@@ -760,14 +760,17 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
                 val design = _carouselDesign.value
                 val theme = design.backgroundTheme
                 val ratio = design.aspectRatio
-                val s = list[index]
-                val res = repository.aiImageService.generateBackground(s.headline, theme, ratio, design.aiBackgroundPrompt)
-                if (res.isAiGenerated && !res.base64.isNullOrBlank()) {
-                    list[index] = s.copy(imageBase64 = res.base64, imagePrompt = design.aiBackgroundPrompt, themeName = theme)
-                    _carouselSlides.value = list
-                    showMessage("\u2728 Gambar AI (${res.modelUsed}) berhasil digenerate untuk Slide ${index + 1}!")
+                val headline = list[index].headline
+                val result = smartBackground(headline, theme, ratio, design.aiBackgroundPrompt)
+                if (result != null) {
+                    val cur = _carouselSlides.value.toMutableList()
+                    if (index in cur.indices) {
+                        cur[index] = cur[index].copy(imageBase64 = result.first, imagePrompt = design.aiBackgroundPrompt, themeName = theme)
+                        _carouselSlides.value = cur
+                    }
+                    showMessage("\u2728 Background Slide ${index + 1} terpasang via ${result.second}.")
                 } else {
-                    showMessage("\u274c Gagal generate gambar AI: ${res.errorReason ?: "tidak diketahui"}. Coba fitur 'Cari Gambar' dari internet, atau cek API key/model di Settings.")
+                    showMessage("\u274c Gagal memasang background: AI, gambar internet, & galeri lokal semuanya tidak tersedia. Cek API key/model gambar di Settings atau koneksi internet.")
                 }
                 _isGeneratingSlideImage.value = false
             }
@@ -781,25 +784,72 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
             val theme = design.backgroundTheme
             val ratio = design.aspectRatio
             val list = _carouselSlides.value.toMutableList()
-            var ai = 0
-            var lastError: String? = null
+            var ok = 0
+            var lastSource = ""
             for (i in list.indices) {
-                val s = list[i]
-                val res = repository.aiImageService.generateBackground(s.headline, theme, ratio, design.aiBackgroundPrompt)
-                if (res.isAiGenerated && !res.base64.isNullOrBlank()) {
-                    ai++
-                    list[i] = s.copy(imageBase64 = res.base64, imagePrompt = design.aiBackgroundPrompt, themeName = theme)
-                } else {
-                    lastError = res.errorReason
+                val res = smartBackground(list[i].headline, theme, ratio, design.aiBackgroundPrompt)
+                if (res != null) {
+                    ok++
+                    lastSource = res.second
+                    list[i] = list[i].copy(imageBase64 = res.first, imagePrompt = design.aiBackgroundPrompt, themeName = theme)
                 }
             }
             _carouselSlides.value = list
             _isGeneratingSlideImage.value = false
-            if (ai > 0) {
-                showMessage("\u2728 $ai/${list.size} background AI berhasil digenerate!")
+            if (ok > 0) {
+                showMessage("\u2728 $ok/${list.size} background terpasang (sumber terakhir: $lastSource).")
             } else {
-                showMessage("\u274c Gagal generate gambar AI: ${lastError ?: "tidak diketahui"}. Coba fitur 'Cari Gambar' dari internet, atau cek API key/model di Settings.")
+                showMessage("\u274c Gagal memasang background dari AI, internet, maupun galeri lokal. Cek API key/model gambar & koneksi internet.")
             }
+        }
+    }
+
+    /**
+     * "Tools pintar" pemilih background: (1) coba generate AI, (2) jika gagal ambil gambar dari
+     * internet (dan simpan ke galeri lokal), (3) jika masih gagal pakai gambar galeri lokal tersimpan.
+     * Mengembalikan Pair(base64, labelSumber) atau null bila semua sumber gagal.
+     */
+    private suspend fun smartBackground(headline: String, theme: String, ratio: String, prompt: String): Pair<String, String>? {
+        // 1) AI image generation
+        val ai = repository.aiImageService.generateBackground(headline, theme, ratio, prompt)
+        val aiB64 = ai.base64
+        if (ai.isAiGenerated && !aiB64.isNullOrBlank()) {
+            return Pair(aiB64, "AI " + (ai.modelUsed ?: ""))
+        }
+        // 2) Gambar dari internet (lalu simpan ke galeri lokal)
+        val query = buildImageQuery(headline, theme, prompt)
+        val web = try {
+            repository.imageSearchService.search(query, 12)
+        } catch (e: Exception) {
+            emptyList()
+        }
+        for (r in web) {
+            val b64 = repository.imageSearchService.downloadAsBase64(r.fullUrl)
+            if (!b64.isNullOrBlank()) {
+                addUploadedBackground(b64)
+                return Pair(b64, "gambar internet (disimpan ke galeri)")
+            }
+        }
+        // 3) Galeri lokal tersimpan
+        val local = _uploadedBackgrounds.value.firstOrNull { it.isNotBlank() }
+        if (local != null) {
+            return Pair(local, "galeri lokal")
+        }
+        return null
+    }
+
+    /** Bangun kata kunci pencarian gambar (bahasa Inggris) dari prompt/tema untuk fallback. */
+    private fun buildImageQuery(headline: String, theme: String, prompt: String): String {
+        val p = prompt.trim()
+        if (p.isNotBlank()) return p
+        return when (theme.uppercase()) {
+            "MINIMALIST TECH", "MINIMAL TECH" -> "minimal technology gradient background"
+            "CYBER NEON", "NEON" -> "cyberpunk neon abstract background"
+            "AESTHETIC PASTEL", "PASTEL" -> "soft pastel aesthetic gradient background"
+            "DARK LUXURY", "LUXURY" -> "black gold luxury texture background"
+            "VINTAGE RETRO", "RETRO" -> "retro sunset gradient background"
+            "3D ILLUSTRATION", "3D ABSTRACT", "3D" -> "3d abstract render background"
+            else -> "abstract aesthetic background"
         }
     }
 
@@ -837,11 +887,12 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
             _isGeneratingSlideImage.value = true
             val b64 = repository.imageSearchService.downloadAsBase64(fullUrl)
             if (b64 != null) {
+                addUploadedBackground(b64)
                 val list = _carouselSlides.value.toMutableList()
                 if (index in list.indices) {
                     list[index] = list[index].copy(imageBase64 = b64)
                     _carouselSlides.value = list
-                    showMessage("\ud83d\uddbc\ufe0f Gambar internet dipasang sebagai background Slide ${index + 1}.")
+                    showMessage("\ud83d\uddbc\ufe0f Gambar internet dipasang di Slide ${index + 1} & disimpan ke galeri.")
                 }
             } else showMessage("Gagal mengunduh gambar. Coba gambar lain.")
             _isGeneratingSlideImage.value = false
@@ -853,10 +904,11 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
             _isGeneratingSlideImage.value = true
             val b64 = repository.imageSearchService.downloadAsBase64(fullUrl)
             if (b64 != null) {
+                addUploadedBackground(b64)
                 val list = _carouselSlides.value.toMutableList()
                 for (i in list.indices) list[i] = list[i].copy(imageBase64 = b64)
                 _carouselSlides.value = list
-                showMessage("\ud83d\uddbc\ufe0f Gambar internet dipasang ke semua slide.")
+                showMessage("\ud83d\uddbc\ufe0f Gambar internet dipasang ke semua slide & disimpan ke galeri.")
             } else showMessage("Gagal mengunduh gambar. Coba gambar lain.")
             _isGeneratingSlideImage.value = false
         }
