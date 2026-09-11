@@ -13,9 +13,11 @@ import com.example.data.remote.GeneratedPersona
 import com.example.data.remote.GeneratedPlanItem
 import com.example.data.remote.PodcastSegmentHighlight
 import com.example.data.remote.VideoCopyResult
+import com.example.data.remote.YouTubeCandidate
 import com.example.data.remote.YouTubeVideoInfo
 import com.example.util.CarouselExporter
 import com.example.util.CarouselRenderer
+import com.example.util.VideoClipper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -42,6 +44,15 @@ data class StudioImageResult(
     val fullUrl: String,
     val thumbBase64: String?,
     val title: String
+)
+
+/** Satu potongan podcast yang sudah tersimpan sebagai file video. */
+data class SavedPodcastClip(
+    val title: String,
+    val uri: String,
+    val displayName: String,
+    val startSec: Int,
+    val endSec: Int
 )
 
 class AutoPostViewModel(application: Application) : AndroidViewModel(application) {
@@ -317,7 +328,7 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
                 }
                 ContentFormat.PODCAST_CLIP -> {
                     _studioSubMode.value = StudioSubMode.PODCAST_CLIP
-                    loadPodcastForTopic(item.title)
+                    searchPodcastCandidates(item.title)
                 }
                 ContentFormat.SELF_VIDEO -> {
                     _studioSubMode.value = StudioSubMode.SELF_VIDEO
@@ -1000,12 +1011,212 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
     private val _isCuttingClip = MutableStateFlow(false)
     val isCuttingClip = _isCuttingClip.asStateFlow()
 
+    // --- NEW: kandidat video hasil pencarian, unduhan file, & potongan tersimpan ---
+    private val _podcastCandidates = MutableStateFlow<List<YouTubeCandidate>>(emptyList())
+    val podcastCandidates = _podcastCandidates.asStateFlow()
+
+    private val _isSearchingPodcast = MutableStateFlow(false)
+    val isSearchingPodcast = _isSearchingPodcast.asStateFlow()
+
+    private val _noRelevantPodcast = MutableStateFlow(false)
+    val noRelevantPodcast = _noRelevantPodcast.asStateFlow()
+
+    private val _selectedCandidate = MutableStateFlow<YouTubeCandidate?>(null)
+    val selectedCandidate = _selectedCandidate.asStateFlow()
+
+    private val _clipAspectRatio = MutableStateFlow(settingsManager.settings.value.defaultClipAspectRatio)
+    val clipAspectRatio = _clipAspectRatio.asStateFlow()
+
+    private val _downloadedVideoPath = MutableStateFlow<String?>(null)
+    val downloadedVideoPath = _downloadedVideoPath.asStateFlow()
+
+    private val _isDownloadingVideoFile = MutableStateFlow(false)
+    val isDownloadingVideoFile = _isDownloadingVideoFile.asStateFlow()
+
+    private val _downloadProgress = MutableStateFlow(0f)
+    val downloadProgress = _downloadProgress.asStateFlow()
+
+    private val _savedClips = MutableStateFlow<List<SavedPodcastClip>>(emptyList())
+    val savedClips = _savedClips.asStateFlow()
+
     fun setStudioMetadata(title: String, hook: String, caption: String, hashtags: String) {
         updateStudioCopy(title, hook, caption, hashtags)
     }
 
     fun transcribeAndProcessPodcast(urlOrTopic: String) {
         downloadAndTranscribeFullVideo(urlOrTopic)
+    }
+
+    /**
+     * Cari 2-3 video YouTube relevan dari tema/rencana. Bila API key kosong atau tidak ada
+     * hasil relevan, beri sinyal agar user mengganti isi konten. Bila auto-pick aktif,
+     * mesin memilih kandidat terbaik (view terbanyak) otomatis.
+     */
+    fun searchPodcastCandidates(theme: String) {
+        viewModelScope.launch {
+            _isSearchingPodcast.value = true
+            _noRelevantPodcast.value = false
+            _podcastCandidates.value = emptyList()
+            _selectedCandidate.value = null
+            _downloadedVideoPath.value = null
+            _savedClips.value = emptyList()
+            _podcastHighlights.value = emptyList()
+            _podcastVideoInfo.value = null
+
+            val key = settings.value.youTubeApiKey.trim()
+            if (key.isBlank()) {
+                _isSearchingPodcast.value = false
+                showMessage("Isi 'YouTube API Key' dulu di Settings agar mesin bisa mencari video podcast relevan.")
+                return@launch
+            }
+            val results = repository.youTubeSearchService.searchRelevantVideos(theme, 3)
+            _podcastCandidates.value = results
+            _isSearchingPodcast.value = false
+            if (results.isEmpty()) {
+                _noRelevantPodcast.value = true
+                showMessage("Tidak ada video YouTube relevan untuk tema ini \u2014 sebaiknya ganti isi konten rencana ini.")
+                return@launch
+            }
+            if (settings.value.autoPickBestPodcast) {
+                val best = results.maxByOrNull { it.viewCount } ?: results.first()
+                selectPodcastCandidate(best)
+                showMessage("Mesin otomatis memilih: ${best.title.take(40)}. Bisa diganti manual kapan saja.")
+            } else {
+                showMessage("Ditemukan ${results.size} video relevan. Pilih salah satu untuk lanjut.")
+            }
+        }
+    }
+
+    /** Pilih kandidat (otomatis/manual), ambil transkrip, lalu minta AI rekomendasi segmen. */
+    fun selectPodcastCandidate(candidate: YouTubeCandidate) {
+        _selectedCandidate.value = candidate
+        _downloadedVideoPath.value = null
+        _savedClips.value = emptyList()
+        viewModelScope.launch {
+            _isLoadingPodcast.value = true
+            val info = repository.youTubeTranscriptService.fetchTranscriptForVideoId(
+                candidate.videoId,
+                candidate.title,
+                candidate.channelName,
+                candidate.durationFormatted
+            )
+            _podcastVideoInfo.value = info
+            _podcastFullTranscript.value = info.transcriptText
+
+            val transcription = repository.geminiService.transcribeAudioWithGemini(info.transcriptText, info.title)
+            _podcastTranscriptionResult.value = transcription
+            _podcastFullTranscript.value = transcription.fullText
+
+            val highlights = repository.geminiService.analyzePodcastTranscript(info.title, transcription.fullText)
+            _podcastHighlights.value = highlights
+            _selectedHighlightIndex.value = 0
+            if (highlights.isNotEmpty()) {
+                _clipStartSec.value = highlights[0].startSec
+                _clipEndSec.value = highlights[0].endSec
+                _studioContentHook.value = highlights[0].hook
+                _studioContentTitle.value = highlights[0].title
+            }
+            _isLoadingPodcast.value = false
+            showMessage("Transkrip & rekomendasi segmen siap. Unduh video lalu potong per segmen.")
+        }
+    }
+
+    fun setClipAspectRatio(ratio: String) {
+        _clipAspectRatio.value = ratio
+    }
+
+    fun saveDefaultClipAspectRatio(ratio: String) {
+        _clipAspectRatio.value = ratio
+        settingsManager.saveDefaultClipAspectRatio(ratio)
+        showMessage("Rasio default klip di-set ke $ratio.")
+    }
+
+    /** Unduh video kandidat terpilih (best-effort on-device). */
+    fun downloadSelectedVideo() {
+        val candidate = _selectedCandidate.value
+        if (candidate == null) {
+            showMessage("Pilih video dulu sebelum mengunduh.")
+            return
+        }
+        viewModelScope.launch {
+            _isDownloadingVideoFile.value = true
+            _downloadProgress.value = 0f
+            showMessage("Mengunduh video HD (best-effort) dari YouTube...")
+            val ctx = getApplication<Application>().applicationContext
+            val result = repository.youTubeDownloadService.downloadVideo(ctx, candidate.videoId) { p ->
+                _downloadProgress.value = p
+            }
+            _isDownloadingVideoFile.value = false
+            if (result != null) {
+                _downloadedVideoPath.value = result.filePath
+                showMessage("\u2705 Video terunduh (${result.qualityLabel}). Siap dipotong per segmen.")
+            } else {
+                _downloadedVideoPath.value = null
+                showMessage("\u274c Unduh otomatis gagal (YouTube memblokir/berubah). Nanti kita siapkan jalur server/worker (yt-dlp) untuk unduhan andal.")
+            }
+        }
+    }
+
+    /** Potong satu segmen (berdasarkan rekomendasi AI) & simpan sebagai video. */
+    fun cutSegmentAt(index: Int) {
+        val path = _downloadedVideoPath.value
+        if (path.isNullOrBlank()) {
+            showMessage("Unduh videonya dulu sebelum memotong.")
+            return
+        }
+        val highlight = _podcastHighlights.value.getOrNull(index) ?: return
+        viewModelScope.launch {
+            _isCuttingClip.value = true
+            _selectedHighlightIndex.value = index
+            val ctx = getApplication<Application>().applicationContext
+            val name = "clip_" + (index + 1) + "_" + highlight.title.take(24)
+            val result = withContext(Dispatchers.IO) {
+                VideoClipper.cutSegment(ctx, path, highlight.startSec * 1000L, highlight.endSec * 1000L, name)
+            }
+            _isCuttingClip.value = false
+            if (result != null) {
+                _savedClips.value = _savedClips.value + SavedPodcastClip(
+                    highlight.title, result.uri, result.displayName, highlight.startSec, highlight.endSec
+                )
+                showMessage("\u2705 Segmen ${index + 1} tersimpan: ${result.displayName}")
+            } else {
+                showMessage("\u274c Gagal memotong segmen ${index + 1}.")
+            }
+        }
+    }
+
+    /** Potong SEMUA segmen rekomendasi AI sekaligus & simpan masing-masing. */
+    fun cutAllSegments() {
+        val path = _downloadedVideoPath.value
+        if (path.isNullOrBlank()) {
+            showMessage("Unduh videonya dulu sebelum memotong.")
+            return
+        }
+        val highlights = _podcastHighlights.value
+        if (highlights.isEmpty()) {
+            showMessage("Belum ada rekomendasi segmen.")
+            return
+        }
+        viewModelScope.launch {
+            _isCuttingClip.value = true
+            showMessage("Memotong ${highlights.size} segmen sesuai rekomendasi AI...")
+            val ctx = getApplication<Application>().applicationContext
+            var ok = 0
+            val newClips = mutableListOf<SavedPodcastClip>()
+            for ((i, h) in highlights.withIndex()) {
+                val name = "clip_" + (i + 1) + "_" + h.title.take(24)
+                val result = withContext(Dispatchers.IO) {
+                    VideoClipper.cutSegment(ctx, path, h.startSec * 1000L, h.endSec * 1000L, name)
+                }
+                if (result != null) {
+                    ok++
+                    newClips.add(SavedPodcastClip(h.title, result.uri, result.displayName, h.startSec, h.endSec))
+                }
+            }
+            _savedClips.value = _savedClips.value + newClips
+            _isCuttingClip.value = false
+            showMessage("\u2705 $ok/${highlights.size} segmen dipotong & disimpan (Movies/AutoPostStudio).")
+        }
     }
 
     fun loadPodcastForTopic(urlOrTopic: String) {
@@ -1080,12 +1291,30 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
             _isCuttingClip.value = true
             _clipStartSec.value = startSec
             _clipEndSec.value = endSec
-            showMessage("Memotong klip video 9:16 dari detik $startSec sampai $endSec...")
             if (!customTitle.isNullOrBlank()) {
                 _studioContentTitle.value = customTitle
             }
+            val path = _downloadedVideoPath.value
+            if (path.isNullOrBlank()) {
+                // Tidak ada file terunduh: hanya set metadata (klip akan dipotong setelah unduh).
+                _isCuttingClip.value = false
+                showMessage("Rentang klip $startSec-$endSec detik disetel. Unduh video lalu tekan 'Potong & Simpan'.")
+                return@launch
+            }
+            val ctx = getApplication<Application>().applicationContext
+            val name = "clip_" + startSec + "_" + endSec
+            val result = withContext(Dispatchers.IO) {
+                VideoClipper.cutSegment(ctx, path, startSec * 1000L, endSec * 1000L, name)
+            }
             _isCuttingClip.value = false
-            showMessage("Klip $startSec-$endSec detik berhasil dipotong & siap dipost!")
+            if (result != null) {
+                _savedClips.value = _savedClips.value + SavedPodcastClip(
+                    _studioContentTitle.value, result.uri, result.displayName, startSec, endSec
+                )
+                showMessage("\u2705 Klip $startSec-$endSec detik dipotong & disimpan: ${result.displayName}")
+            } else {
+                showMessage("\u274c Gagal memotong klip $startSec-$endSec detik.")
+            }
         }
     }
 
@@ -1294,8 +1523,16 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
                     }
                     else -> null
                 },
-                generatedVideoUrl = if (format == ContentFormat.AI_VIDEO) generatedVideo?.videoUrl else null,
-                videoAspectRatio = if (format == ContentFormat.AI_VIDEO) _aiVideoAspectRatio.value else "9:16"
+                generatedVideoUrl = when (format) {
+                    ContentFormat.AI_VIDEO -> generatedVideo?.videoUrl
+                    ContentFormat.PODCAST_CLIP -> _savedClips.value.lastOrNull()?.uri
+                    else -> null
+                },
+                videoAspectRatio = when (format) {
+                    ContentFormat.AI_VIDEO -> _aiVideoAspectRatio.value
+                    ContentFormat.PODCAST_CLIP -> _clipAspectRatio.value
+                    else -> "9:16"
+                }
             )
 
             repository.savePost(post)
