@@ -15,6 +15,12 @@ enum class CarouselElement { HEADLINE, BODY, SUBTEXT, CTA, LOGO, WATERMARK, PAGE
 
 enum class TextAlignH { START, CENTER, END }
 
+/** Model penulisan huruf (bagian dari tipografi). */
+enum class TextCase { NORMAL, UPPER, LOWER, TITLE }
+
+/** Efek visual/art pada teks (bagian dari tipografi). */
+enum class TextEffect { NONE, SHADOW, OUTLINE, HIGHLIGHT, NEON, GRADIENT }
+
 /**
  * Layout & gaya satu elemen. Posisi disimpan sebagai fraksi 0..1 relatif terhadap
  * kanvas sehingga konsisten di semua rasio & resolusi (preview == hasil download).
@@ -30,7 +36,10 @@ data class ElementLayout(
     val underline: Boolean = false,
     val align: TextAlignH = TextAlignH.CENTER,
     val colorHex: String? = null,
-    val visible: Boolean = true
+    val visible: Boolean = true,
+    val case: TextCase = TextCase.NORMAL,
+    val effect: TextEffect = TextEffect.NONE,
+    val letterSpacing: Float = 0f
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("element", element.name)
@@ -44,6 +53,9 @@ data class ElementLayout(
         put("align", align.name)
         put("color", colorHex ?: JSONObject.NULL)
         put("visible", visible)
+        put("case", case.name)
+        put("effect", effect.name)
+        put("letterSpacing", letterSpacing.toDouble())
     }
 
     companion object {
@@ -58,14 +70,28 @@ data class ElementLayout(
             underline = o.optBoolean("underline", false),
             align = try { TextAlignH.valueOf(o.optString("align", "CENTER")) } catch (e: Exception) { TextAlignH.CENTER },
             colorHex = if (o.has("color") && !o.isNull("color")) o.optString("color") else null,
-            visible = o.optBoolean("visible", true)
+            visible = o.optBoolean("visible", true),
+            case = try { TextCase.valueOf(o.optString("case", "NORMAL")) } catch (e: Exception) { TextCase.NORMAL },
+            effect = try { TextEffect.valueOf(o.optString("effect", "NONE")) } catch (e: Exception) { TextEffect.NONE },
+            letterSpacing = o.optDouble("letterSpacing", 0.0).toFloat()
         )
     }
 }
 
 data class AspectRatioSpec(val key: String, val label: String, val width: Int, val height: Int)
 
-/** Katalog preset yang bisa dipilih user (rasio, font, tipografi, tema, ikon CTA). */
+/** Preset tipografi: bukan cuma jenis huruf, tapi juga model penulisan, efek art, & spasi. */
+data class TypographyPreset(
+    val name: String,
+    val fontFamily: String,
+    val case: TextCase,
+    val effect: TextEffect,
+    val letterSpacing: Float,
+    val bold: Boolean,
+    val description: String
+)
+
+/** Katalog preset yang bisa dipilih user (rasio, font, tipografi, tema, ikon CTA, layout). */
 object CarouselPresets {
     val aspectRatios = listOf(
         AspectRatioSpec("1:1", "1:1 Square", 1080, 1080),
@@ -79,10 +105,23 @@ object CarouselPresets {
 
     val fontFamilies = listOf("Sans", "Serif", "Monospace", "Rounded", "Condensed")
 
-    val typographyStyles = listOf(
-        "Modern Minimalist", "Glassmorphism Card", "Bold Hero", "Editorial Serif",
-        "Bottom Scrim", "Cyber Neon", "Center Stage", "Left Pro", "Big Quote", "Magazine"
+    val typographyPresets = listOf(
+        TypographyPreset("Modern Minimalist", "Sans", TextCase.NORMAL, TextEffect.NONE, 0f, false, "Bersih & netral"),
+        TypographyPreset("Glassmorphism Card", "Sans", TextCase.NORMAL, TextEffect.HIGHLIGHT, 0f, true, "Kartu highlight"),
+        TypographyPreset("Bold Hero", "Sans", TextCase.UPPER, TextEffect.SHADOW, 0.02f, true, "Kapital tebal"),
+        TypographyPreset("Editorial Serif", "Serif", TextCase.TITLE, TextEffect.NONE, 0f, false, "Elegan majalah"),
+        TypographyPreset("Bottom Scrim", "Sans", TextCase.NORMAL, TextEffect.SHADOW, 0f, true, "Teks bawah gelap"),
+        TypographyPreset("Cyber Neon", "Monospace", TextCase.UPPER, TextEffect.NEON, 0.06f, true, "Glow neon"),
+        TypographyPreset("Center Stage", "Sans", TextCase.NORMAL, TextEffect.SHADOW, 0.01f, true, "Fokus tengah"),
+        TypographyPreset("Left Pro", "Sans", TextCase.NORMAL, TextEffect.NONE, 0f, true, "Rata kiri pro"),
+        TypographyPreset("Big Quote", "Serif", TextCase.NORMAL, TextEffect.NONE, 0f, false, "Kutipan besar"),
+        TypographyPreset("Magazine", "Serif", TextCase.UPPER, TextEffect.OUTLINE, 0.04f, true, "Outline majalah")
     )
+
+    val typographyStyles = typographyPresets.map { it.name }
+
+    fun typographyPresetFor(name: String): TypographyPreset =
+        typographyPresets.firstOrNull { it.name == name } ?: typographyPresets[0]
 
     val backgroundThemes = listOf(
         "Minimalist Tech", "Cyber Neon", "Aesthetic Pastel", "Dark Luxury",
@@ -91,6 +130,8 @@ object CarouselPresets {
     )
 
     val ctaIcons = listOf("\u27a1\ufe0f", "\ud83d\udc49", "\ud83d\udc47", "\ud83d\udcbe", "\ud83d\udd16", "\ud83d\udccc", "\u2764\ufe0f", "\ud83d\udd25", "\u2728", "\ud83d\udd01", "")
+
+    val layoutTemplates = listOf("Classic Center", "Top Heading", "Bottom Bar", "Left Aligned", "Big Quote")
 
     fun defaultLayoutFor(role: SlideRole): List<ElementLayout> {
         val watermark = ElementLayout(CarouselElement.WATERMARK, 0.5f, 0.955f, 0.9f, 0.7f, align = TextAlignH.CENTER)
@@ -121,6 +162,47 @@ object CarouselPresets {
         }
     }
 
+    /** Template layout siap-pakai (mengatur posisi semua elemen sekaligus). */
+    fun templateLayoutFor(template: String, role: SlideRole): List<ElementLayout> {
+        val base = defaultLayoutFor(role)
+        return when (template) {
+            "Top Heading" -> base.map { el ->
+                when (el.element) {
+                    CarouselElement.HEADLINE -> el.copy(yFraction = 0.2f)
+                    CarouselElement.BODY -> el.copy(yFraction = 0.44f)
+                    CarouselElement.SUBTEXT -> el.copy(yFraction = 0.62f)
+                    CarouselElement.CTA -> el.copy(yFraction = 0.8f)
+                    else -> el
+                }
+            }
+            "Bottom Bar" -> base.map { el ->
+                when (el.element) {
+                    CarouselElement.SUBTEXT -> el.copy(yFraction = 0.62f)
+                    CarouselElement.HEADLINE -> el.copy(yFraction = 0.72f)
+                    CarouselElement.BODY -> el.copy(yFraction = 0.83f)
+                    CarouselElement.CTA -> el.copy(yFraction = 0.92f)
+                    else -> el
+                }
+            }
+            "Left Aligned" -> base.map { el ->
+                when (el.element) {
+                    CarouselElement.HEADLINE, CarouselElement.BODY -> el.copy(xFraction = 0.32f, widthFraction = 0.62f, align = TextAlignH.START)
+                    CarouselElement.SUBTEXT, CarouselElement.CTA -> el.copy(xFraction = 0.32f, align = TextAlignH.START)
+                    else -> el
+                }
+            }
+            "Big Quote" -> base.map { el ->
+                when (el.element) {
+                    CarouselElement.HEADLINE -> el.copy(yFraction = 0.5f, fontScale = el.fontScale * 1.15f)
+                    CarouselElement.BODY -> el.copy(yFraction = 0.72f)
+                    CarouselElement.SUBTEXT -> el.copy(yFraction = 0.86f)
+                    else -> el
+                }
+            }
+            else -> base
+        }
+    }
+
     fun roleForSlide(index: Int, total: Int): SlideRole = when {
         index <= 0 -> SlideRole.HOOK
         index >= total - 1 -> SlideRole.CTA
@@ -130,7 +212,7 @@ object CarouselPresets {
 
 /**
  * Konfigurasi desain lengkap satu carousel. Dipakai bareng oleh editor (manual),
- * mesin/AI (otomatis), preview, dan exporter — satu sumber kebenaran.
+ * mesin/AI (otomatis), preview, dan exporter - satu sumber kebenaran.
  */
 data class CarouselDesign(
     val aspectRatio: String = "4:5",
@@ -145,6 +227,8 @@ data class CarouselDesign(
     val watermarkText: String = "@AutoPostStudio",
     val logoBase64: String? = null,
     val showPageNumber: Boolean = true,
+    val aiBackgroundPrompt: String = "",
+    val layoutTemplate: String = "Classic Center",
     val layouts: Map<SlideRole, List<ElementLayout>> = mapOf(
         SlideRole.HOOK to CarouselPresets.defaultLayoutFor(SlideRole.HOOK),
         SlideRole.BODY to CarouselPresets.defaultLayoutFor(SlideRole.BODY),
@@ -165,6 +249,30 @@ data class CarouselDesign(
         return copy(layouts = newLayouts)
     }
 
+    /** Terapkan template posisi ke semua peran sekaligus. */
+    fun withLayoutTemplate(template: String): CarouselDesign {
+        val newLayouts = mutableMapOf<SlideRole, List<ElementLayout>>()
+        for (r in SlideRole.values()) newLayouts[r] = CarouselPresets.templateLayoutFor(template, r)
+        return copy(layoutTemplate = template, layouts = newLayouts)
+    }
+
+    /** Terapkan preset tipografi (model penulisan, efek art, spasi, bold) ke semua elemen teks. */
+    fun withTypographyApplied(): CarouselDesign {
+        val preset = CarouselPresets.typographyPresetFor(typographyStyle)
+        val newLayouts = layouts.mapValues { (_, list) ->
+            list.map { el ->
+                if (el.element == CarouselElement.LOGO || el.element == CarouselElement.PAGE_NUMBER) el
+                else el.copy(
+                    case = preset.case,
+                    effect = preset.effect,
+                    letterSpacing = preset.letterSpacing,
+                    bold = if (el.element == CarouselElement.HEADLINE || el.element == CarouselElement.CTA) preset.bold else el.bold
+                )
+            }
+        }
+        return copy(fontFamily = preset.fontFamily, layouts = newLayouts)
+    }
+
     fun toJsonString(): String = JSONObject().apply {
         put("aspectRatio", aspectRatio)
         put("typographyStyle", typographyStyle)
@@ -178,6 +286,8 @@ data class CarouselDesign(
         put("watermarkText", watermarkText)
         put("logoBase64", logoBase64 ?: JSONObject.NULL)
         put("showPageNumber", showPageNumber)
+        put("aiBackgroundPrompt", aiBackgroundPrompt)
+        put("layoutTemplate", layoutTemplate)
         val lay = JSONObject()
         layouts.forEach { (role, list) ->
             val arr = JSONArray()
@@ -218,6 +328,8 @@ data class CarouselDesign(
                 watermarkText = o.optString("watermarkText", base.watermarkText),
                 logoBase64 = if (o.has("logoBase64") && !o.isNull("logoBase64")) o.optString("logoBase64") else null,
                 showPageNumber = o.optBoolean("showPageNumber", true),
+                aiBackgroundPrompt = o.optString("aiBackgroundPrompt", base.aiBackgroundPrompt),
+                layoutTemplate = o.optString("layoutTemplate", base.layoutTemplate),
                 layouts = if (layouts.isEmpty()) base.layouts else layouts
             )
         }
