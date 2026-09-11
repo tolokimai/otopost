@@ -26,23 +26,33 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import com.example.data.local.entity.CarouselDesign
 import com.example.data.local.entity.CarouselElement
 import com.example.data.local.entity.CarouselPresets
 import com.example.data.local.entity.CarouselSlide
+import com.example.data.local.entity.ElementLayout
 import com.example.data.local.entity.SlideRole
 import com.example.data.local.entity.TextAlignH
+import com.example.data.local.entity.TextCase
+import com.example.data.local.entity.TextEffect
 import com.example.ui.theme.*
 import com.example.viewmodel.AutoPostViewModel
 import kotlinx.coroutines.Dispatchers
@@ -74,14 +84,62 @@ private fun roleLabel(r: SlideRole): String = when (r) {
     SlideRole.CTA -> "CTA (Slide Akhir)"
 }
 
+private fun caseLabel(c: TextCase): String = when (c) {
+    TextCase.NORMAL -> "Normal"
+    TextCase.UPPER -> "UPPER"
+    TextCase.LOWER -> "lower"
+    TextCase.TITLE -> "Title"
+}
+
+private fun effectLabel(e: TextEffect): String = when (e) {
+    TextEffect.NONE -> "Polos"
+    TextEffect.SHADOW -> "Bayangan"
+    TextEffect.OUTLINE -> "Outline"
+    TextEffect.HIGHLIGHT -> "Stabilo"
+    TextEffect.NEON -> "Neon"
+    TextEffect.GRADIENT -> "Gradasi"
+}
+
+private fun famOf(family: String): FontFamily = when (family) {
+    "Serif" -> FontFamily.Serif
+    "Monospace" -> FontFamily.Monospace
+    else -> FontFamily.SansSerif
+}
+
+private fun caseText(t: String, c: TextCase): String = when (c) {
+    TextCase.UPPER -> t.uppercase()
+    TextCase.LOWER -> t.lowercase()
+    TextCase.TITLE -> t.split(" ").joinToString(" ") { w -> if (w.isNotEmpty()) w.substring(0, 1).uppercase() + w.substring(1).lowercase() else w }
+    else -> t
+}
+
+private fun alignCompose(a: TextAlignH): TextAlign = when (a) {
+    TextAlignH.START -> TextAlign.Start
+    TextAlignH.END -> TextAlign.End
+    else -> TextAlign.Center
+}
+
+private fun hexColor(hex: String?, fallback: Color): Color = try {
+    if (hex.isNullOrBlank()) fallback else Color(android.graphics.Color.parseColor(hex))
+} catch (e: Exception) { fallback }
+
 @Composable
-private fun rememberSlideBitmap(design: CarouselDesign, slide: CarouselSlide, index: Int, total: Int): ImageBitmap? {
+private fun rememberBase64Image(b64: String?): ImageBitmap? = remember(b64) {
+    if (b64.isNullOrBlank()) null else try {
+        val bytes = android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
+        android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+    } catch (e: Exception) { null }
+}
+
+@Composable
+private fun rememberSlideBitmap(design: CarouselDesign, slide: CarouselSlide, index: Int, total: Int, backgroundOnly: Boolean): ImageBitmap? {
     val context = LocalContext.current
     val role = CarouselPresets.roleForSlide(index, total)
-    val state = produceState<ImageBitmap?>(null, design, slide, index, total) {
+    val state = produceState<ImageBitmap?>(null, design, slide, index, total, backgroundOnly) {
         value = withContext(Dispatchers.Default) {
             try {
-                CarouselRendererBridge.render(context, design, slide, role, index + 1, total)
+                if (backgroundOnly) CarouselRendererBridge.renderBackground(context, design, slide, index + 1)
+                else CarouselRendererBridge.render(context, design, slide, role, index + 1, total)
             } catch (e: Exception) {
                 null
             }
@@ -94,6 +152,33 @@ private fun rememberSlideBitmap(design: CarouselDesign, slide: CarouselSlide, in
 private object CarouselRendererBridge {
     fun render(context: android.content.Context, design: CarouselDesign, slide: CarouselSlide, role: SlideRole, num: Int, total: Int): ImageBitmap =
         com.example.util.CarouselRenderer.render(context, design, slide, role, num, total).asImageBitmap()
+
+    fun renderBackground(context: android.content.Context, design: CarouselDesign, slide: CarouselSlide, num: Int): ImageBitmap =
+        com.example.util.CarouselRenderer.renderBackground(context, design, slide, num).asImageBitmap()
+}
+
+// Bangun TextStyle dari elemen (dipakai overlay Canva) supaya preview mirip hasil render.
+private fun styleForElement(el: ElementLayout, design: CarouselDesign, fontSizeSp: androidx.compose.ui.unit.TextUnit, sizePx: Float): TextStyle {
+    val baseColor = hexColor(el.colorHex ?: design.textColorHex, Color.White)
+    val accent = hexColor(design.accentColorHex, Color(0xFF38BDF8))
+    var ts = TextStyle(
+        color = if (el.effect == TextEffect.NEON) Color.White else baseColor,
+        fontSize = fontSizeSp,
+        fontWeight = if (el.bold) FontWeight.Bold else FontWeight.Normal,
+        fontStyle = if (el.italic) FontStyle.Italic else FontStyle.Normal,
+        fontFamily = famOf(design.fontFamily),
+        textAlign = alignCompose(el.align),
+        textDecoration = if (el.underline) TextDecoration.Underline else null,
+        letterSpacing = el.letterSpacing.em
+    )
+    ts = when (el.effect) {
+        TextEffect.SHADOW -> ts.copy(shadow = Shadow(Color.Black.copy(alpha = 0.7f), Offset(0f, sizePx * 0.06f), sizePx * 0.18f))
+        TextEffect.NEON -> ts.copy(shadow = Shadow(accent, Offset.Zero, sizePx * 0.5f))
+        TextEffect.OUTLINE -> ts.copy(shadow = Shadow(Color.Black, Offset.Zero, sizePx * 0.14f))
+        TextEffect.GRADIENT -> ts.copy(brush = Brush.verticalGradient(listOf(baseColor, accent)))
+        else -> ts
+    }
+    return ts
 }
 
 @Composable
@@ -156,11 +241,11 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
             FilterChip(
                 selected = editMode,
                 onClick = { editMode = !editMode },
-                label = { Text(if (editMode) "Atur Posisi: ON" else "Atur Posisi: OFF", fontSize = 10.sp) }
+                label = { Text(if (editMode) "Mode Edit (Canva)" else "Mode Pratinjau", fontSize = 10.sp) }
             )
         }
 
-        // 1. Swipeable preview pager (WYSIWYG)
+        // 1. Swipeable preview pager. Edit mode = editor Canva (elemen bisa diklik & digeser).
         HorizontalPager(
             state = pagerState,
             pageSpacing = 12.dp,
@@ -169,7 +254,7 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
             val slide = slides.getOrNull(page)
             if (slide != null) {
                 val pageRole = CarouselPresets.roleForSlide(page, total)
-                val bmp = rememberSlideBitmap(design, slide, page, total)
+                val bmp = rememberSlideBitmap(design, slide, page, total, editMode)
                 BoxWithConstraints(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -193,23 +278,52 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
                         CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 2.dp)
                     }
 
-                    if (editMode && page == activeIndex) {
+                    // Overlay elemen Canva: hanya pada slide aktif & saat mode edit.
+                    if (editMode && page == activeIndex && bmp != null) {
                         design.layoutFor(pageRole).forEach { el ->
-                            if (el.visible) {
+                            val display = when (el.element) {
+                                CarouselElement.HEADLINE -> slide.headline
+                                CarouselElement.BODY -> slide.body
+                                CarouselElement.SUBTEXT -> slide.subtext
+                                CarouselElement.CTA -> (design.ctaText + (if (design.ctaIcon.isNotBlank()) " " + design.ctaIcon else "")).trim()
+                                CarouselElement.WATERMARK -> design.watermarkText
+                                CarouselElement.PAGE_NUMBER -> String.format("%02d / %02d", page + 1, total)
+                                CarouselElement.LOGO -> ""
+                            }
+                            val skip = !el.visible ||
+                                (el.element == CarouselElement.PAGE_NUMBER && !design.showPageNumber) ||
+                                (el.element != CarouselElement.LOGO && display.isBlank()) ||
+                                (el.element == CarouselElement.LOGO && design.logoBase64 == null)
+                            if (!skip) {
                                 key(el.element) {
                                     var pos by remember(el.element, el.xFraction, el.yFraction, pageRole) {
                                         mutableStateOf(Offset(el.xFraction, el.yFraction))
                                     }
+                                    var elemSize by remember(el.element) { mutableStateOf(IntSize.Zero) }
                                     val selected = selectedElement == el.element
+                                    val elWidthDp = maxWidth * el.widthFraction
+                                    val sizePx = boxWpx * 0.052f * design.baseFontScale * el.fontScale
+                                    val fontSizeSp = with(density) { sizePx.toSp() }
+                                    val ts = styleForElement(el, design, fontSizeSp, sizePx)
+
                                     Box(
                                         modifier = Modifier
-                                            .offset { IntOffset((pos.x * boxWpx - 44f).roundToInt(), (pos.y * boxHpx - 16f).roundToInt()) }
-                                            .clip(RoundedCornerShape(8.dp))
-                                            .background(if (selected) MaterialTheme.colorScheme.primary else Color.Black.copy(alpha = 0.6f))
-                                            .border(1.dp, Color.White.copy(alpha = 0.7f), RoundedCornerShape(8.dp))
+                                            .offset {
+                                                IntOffset(
+                                                    (pos.x * boxWpx - elemSize.width / 2f).roundToInt(),
+                                                    (pos.y * boxHpx - elemSize.height / 2f).roundToInt()
+                                                )
+                                            }
+                                            .onSizeChanged { elemSize = it }
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .then(
+                                                if (selected) Modifier.border(1.5.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(6.dp))
+                                                else Modifier
+                                            )
                                             .clickable { selectedElement = el.element }
                                             .pointerInput(el.element, pageRole, boxWpx, boxHpx) {
                                                 detectDragGestures(
+                                                    onDragStart = { selectedElement = el.element },
                                                     onDragEnd = { viewModel.setElementPosition(pageRole, el.element, pos.x, pos.y) }
                                                 ) { change, drag ->
                                                     change.consume()
@@ -217,12 +331,51 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
                                                         (pos.x + drag.x / boxWpx).coerceIn(0f, 1f),
                                                         (pos.y + drag.y / boxHpx).coerceIn(0f, 1f)
                                                     )
-                                                    selectedElement = el.element
                                                 }
                                             }
-                                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                                            .padding(2.dp)
                                     ) {
-                                        Text(labelForElement(el.element), fontSize = 9.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                                        when (el.element) {
+                                            CarouselElement.LOGO -> {
+                                                val logoImg = rememberBase64Image(design.logoBase64)
+                                                if (logoImg != null) {
+                                                    Image(
+                                                        bitmap = logoImg,
+                                                        contentDescription = "Logo",
+                                                        contentScale = ContentScale.Fit,
+                                                        modifier = Modifier.width(elWidthDp)
+                                                    )
+                                                }
+                                            }
+                                            CarouselElement.SUBTEXT, CarouselElement.CTA -> {
+                                                val accent = hexColor(design.accentColorHex, Color(0xFF38BDF8))
+                                                Box(
+                                                    modifier = Modifier
+                                                        .clip(RoundedCornerShape(50))
+                                                        .background(Color.Black.copy(alpha = 0.55f))
+                                                        .border(1.dp, accent, RoundedCornerShape(50))
+                                                        .padding(horizontal = 10.dp, vertical = 5.dp)
+                                                ) {
+                                                    Text(caseText(display, el.case), style = ts.copy(shadow = null))
+                                                }
+                                            }
+                                            else -> {
+                                                val highlight = el.effect == TextEffect.HIGHLIGHT
+                                                Text(
+                                                    caseText(display, el.case),
+                                                    style = ts,
+                                                    modifier = Modifier
+                                                        .widthIn(max = elWidthDp)
+                                                        .then(
+                                                            if (highlight) Modifier
+                                                                .clip(RoundedCornerShape(6.dp))
+                                                                .background(Color.Black.copy(alpha = 0.6f))
+                                                                .padding(horizontal = 6.dp, vertical = 3.dp)
+                                                            else Modifier
+                                                        )
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -247,7 +400,7 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
 
         if (editMode) {
             Text(
-                "Tips: geser label elemen di preview untuk mengatur posisi, lalu tekan 'Tetapkan Favorit' agar dipakai ulang oleh mesin.",
+                "Canva-style: ketuk elemen lalu geser langsung untuk memindahnya. Tekan 'Tetapkan Favorit' agar posisi & gaya dipakai ulang oleh mesin.",
                 fontSize = 10.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -315,15 +468,31 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
             }
         }
 
-        // 3. Typography + mini preview + font family
+        // 3. Typography (jenis huruf + model penulisan + efek art) + mini preview + font family
         PanelCard("Gaya & Tipografi") {
+            Text("Preset tipografi (model penulisan + efek art):", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(CarouselPresets.typographyStyles) { style ->
                     val selected = design.typographyStyle == style
+                    val preset = CarouselPresets.typographyPresetFor(style)
+                    val sampleStyle = TextStyle(
+                        color = Color.White,
+                        fontSize = 20.sp,
+                        fontWeight = if (preset.bold) FontWeight.ExtraBold else FontWeight.Normal,
+                        fontFamily = famOf(preset.fontFamily),
+                        letterSpacing = preset.letterSpacing.em,
+                        shadow = when (preset.effect) {
+                            TextEffect.SHADOW -> Shadow(Color.Black, Offset(0f, 3f), 6f)
+                            TextEffect.NEON -> Shadow(Color(0xFF38BDF8), Offset.Zero, 18f)
+                            TextEffect.OUTLINE -> Shadow(Color.Black, Offset.Zero, 5f)
+                            else -> null
+                        },
+                        brush = if (preset.effect == TextEffect.GRADIENT) Brush.verticalGradient(listOf(Color.White, Color(0xFF38BDF8))) else null
+                    )
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier
-                            .width(92.dp)
+                            .width(96.dp)
                             .clip(RoundedCornerShape(10.dp))
                             .border(
                                 if (selected) 2.dp else 1.dp,
@@ -341,10 +510,11 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
                                 .background(Brush.verticalGradient(listOf(Color(0xFF0F172A), Color(0xFF1E293B)))),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text("Aa", fontSize = 20.sp, color = Color.White, fontWeight = FontWeight.ExtraBold)
+                            Text(caseText("Aa", preset.case), style = sampleStyle)
                         }
                         Spacer(Modifier.height(4.dp))
                         Text(style, fontSize = 9.sp, textAlign = TextAlign.Center, maxLines = 2)
+                        Text(preset.description, fontSize = 8.sp, textAlign = TextAlign.Center, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
@@ -360,7 +530,21 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
             }
         }
 
-        // 4. Background theme + local file + AI + preview
+        // 3b. Template tata letak (mengatur posisi semua elemen sekaligus)
+        PanelCard("Template Tata Letak") {
+            Text("Atur posisi semua elemen sekaligus, lalu bebas geser manual.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                items(CarouselPresets.layoutTemplates) { tpl ->
+                    FilterChip(
+                        selected = design.layoutTemplate == tpl,
+                        onClick = { viewModel.setDesignLayoutTemplate(tpl) },
+                        label = { Text(tpl, fontSize = 10.sp) }
+                    )
+                }
+            }
+        }
+
+        // 4. Background theme + local file + AI (dengan kolom prompt) + preview
         PanelCard("Tema Visual & Background") {
             LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 items(CarouselPresets.backgroundThemes) { t ->
@@ -371,6 +555,15 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
                     )
                 }
             }
+            OutlinedTextField(
+                value = design.aiBackgroundPrompt,
+                onValueChange = { viewModel.setDesignAiPrompt(it) },
+                label = { Text("Prompt Background AI (opsional)") },
+                placeholder = { Text("Cth: gradasi biru tosca lembut, bokeh, minimalis", fontSize = 11.sp) },
+                supportingText = { Text("Sistem otomatis melarang teks/logo & konten tidak aman, maks 400 karakter.", fontSize = 9.sp) },
+                minLines = 2,
+                modifier = Modifier.fillMaxWidth()
+            )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = { bgPicker.launch("image/*") }, modifier = Modifier.weight(1f)) {
                     Icon(Icons.Default.Image, contentDescription = null, modifier = Modifier.size(14.dp))
@@ -455,10 +648,10 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
             }
         }
 
-        // 7 & 8. Text & element settings + drag/assign
+        // 7 & 8. Text & element settings + case/effect + drag/assign
         PanelCard("Pengaturan Teks & Elemen") {
             Text("Peran slide aktif: ${roleLabel(role)}", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-            Text("Pilih elemen (atau geser langsung di preview):", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Pilih elemen (atau ketuk & geser langsung di preview):", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 items(design.layoutFor(role)) { el ->
                     FilterChip(
@@ -487,6 +680,18 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
                         FilterChip(selected = current.align == TextAlignH.START, onClick = { viewModel.setElementAlign(role, selectedElement, TextAlignH.START) }, label = { Text("Kiri", fontSize = 10.sp) })
                         FilterChip(selected = current.align == TextAlignH.CENTER, onClick = { viewModel.setElementAlign(role, selectedElement, TextAlignH.CENTER) }, label = { Text("Tengah", fontSize = 10.sp) })
                         FilterChip(selected = current.align == TextAlignH.END, onClick = { viewModel.setElementAlign(role, selectedElement, TextAlignH.END) }, label = { Text("Kanan", fontSize = 10.sp) })
+                    }
+                    Text("Model penulisan (besar/kecil huruf):", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(listOf(TextCase.NORMAL, TextCase.UPPER, TextCase.LOWER, TextCase.TITLE)) { c ->
+                            FilterChip(selected = current.case == c, onClick = { viewModel.setElementCase(role, selectedElement, c) }, label = { Text(caseLabel(c), fontSize = 10.sp) })
+                        }
+                    }
+                    Text("Efek art huruf:", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(listOf(TextEffect.NONE, TextEffect.SHADOW, TextEffect.OUTLINE, TextEffect.HIGHLIGHT, TextEffect.NEON, TextEffect.GRADIENT)) { ef ->
+                            FilterChip(selected = current.effect == ef, onClick = { viewModel.setElementEffect(role, selectedElement, ef) }, label = { Text(effectLabel(ef), fontSize = 10.sp) })
+                        }
                     }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -528,7 +733,7 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
             ) {
                 Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
-                Text("Auto Desain oleh AI", fontWeight = FontWeight.Bold)
+                Text("Auto Desain oleh AI (tema, tipografi & posisi)", fontWeight = FontWeight.Bold, fontSize = 12.sp)
             }
         }
 
