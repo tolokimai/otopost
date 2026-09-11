@@ -81,6 +81,7 @@ object CarouselRenderer {
                 CarouselElement.WATERMARK -> if (design.watermarkText.isNotBlank()) drawTextBox(canvas, w, h, design.watermarkText, el, design, baseSizePx)
                 CarouselElement.PAGE_NUMBER -> if (design.showPageNumber) drawTextBox(canvas, w, h, String.format("%02d / %02d", slideNumber, totalSlides), el, design, baseSizePx)
                 CarouselElement.LOGO -> drawLogo(canvas, w, h, el, design)
+                CarouselElement.SWIPE -> drawSwipe(canvas, w, h, el, design, baseSizePx, slideNumber, totalSlides)
             }
         }
         return bitmap
@@ -282,6 +283,82 @@ object CarouselRenderer {
             val cy = el.yFraction * h
             canvas.drawBitmap(src, null, RectF(cx - dw / 2f, cy - dh / 2f, cx + dw / 2f, cy + dh / 2f), Paint(Paint.FILTER_BITMAP_FLAG))
         } catch (e: Exception) { /* ignore */ }
+    }
+
+    /**
+     * Indikator geser (swipe) yang sepenuhnya bisa dikustom: teks, emoji bawaan,
+     * atau ikon PNG upload; bisa ikon-saja, dimatikan, atau ditampilkan di slide terakhir.
+     */
+    private fun drawSwipe(
+        canvas: Canvas,
+        w: Int,
+        h: Int,
+        el: ElementLayout,
+        design: CarouselDesign,
+        baseSizePx: Float,
+        slideNumber: Int,
+        totalSlides: Int
+    ) {
+        if (!design.swipeEnabled) return
+        val isLast = slideNumber >= totalSlides
+        if (isLast && !design.swipeShowOnLastSlide) return
+
+        val size = baseSizePx * el.fontScale
+        val tp = buildTextPaint(design, el, size)
+        tp.clearShadowLayer()
+        tp.textAlign = Paint.Align.LEFT
+
+        val text = if (design.swipeIconOnly) "" else applyCase(design.swipeText, el.case)
+        val pngIcon: Bitmap? = if (!design.swipeIconBase64.isNullOrBlank()) {
+            try {
+                val b = Base64.decode(design.swipeIconBase64, Base64.DEFAULT)
+                BitmapFactory.decodeByteArray(b, 0, b.size)
+            } catch (e: Exception) { null }
+        } else null
+        val emojiIcon = if (pngIcon == null) design.swipeIconBuiltin else ""
+
+        val iconSize = size * 1.2f
+        val textW = if (text.isNotBlank()) tp.measureText(text) else 0f
+        val iconW = when {
+            pngIcon != null -> iconSize
+            emojiIcon.isNotBlank() -> tp.measureText(emojiIcon)
+            else -> 0f
+        }
+        val gap = if (textW > 0f && iconW > 0f) size * 0.3f else 0f
+        val contentW = textW + gap + iconW
+        if (contentW <= 0f) return
+
+        val fm = tp.fontMetrics
+        val padH = size * 0.6f
+        val padV = size * 0.4f
+        val contentH = maxOf(fm.descent - fm.ascent, iconSize)
+        val pillW = contentW + padH * 2
+        val pillH = contentH + padV * 2
+        val cx = el.xFraction * w
+        val cy = el.yFraction * h
+        val rect = RectF(cx - pillW / 2f, cy - pillH / 2f, cx + pillW / 2f, cy + pillH / 2f)
+
+        val bg = Paint(Paint.ANTI_ALIAS_FLAG)
+        bg.color = Color.argb(150, 0, 0, 0)
+        canvas.drawRoundRect(rect, pillH / 2f, pillH / 2f, bg)
+        val border = Paint(Paint.ANTI_ALIAS_FLAG)
+        border.style = Paint.Style.STROKE
+        border.strokeWidth = size * 0.06f
+        border.color = parseColor(design.accentColorHex)
+        canvas.drawRoundRect(rect, pillH / 2f, pillH / 2f, border)
+
+        var drawX = cx - contentW / 2f
+        val baselineY = cy - (fm.ascent + fm.descent) / 2f
+        if (text.isNotBlank()) {
+            canvas.drawText(text, drawX, baselineY, tp)
+            drawX += textW + gap
+        }
+        if (pngIcon != null) {
+            val top = cy - iconSize / 2f
+            canvas.drawBitmap(pngIcon, null, RectF(drawX, top, drawX + iconSize, top + iconSize), Paint(Paint.FILTER_BITMAP_FLAG))
+        } else if (emojiIcon.isNotBlank()) {
+            canvas.drawText(emojiIcon, drawX, baselineY, tp)
+        }
     }
 }
 
