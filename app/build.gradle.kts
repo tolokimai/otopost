@@ -17,8 +17,8 @@ android {
     applicationId = "com.aistudio.autopoststudio.pxqw"
     minSdk = 24
     targetSdk = 36
-    versionCode = 10
-    versionName = "10.0"
+    versionCode = 12
+    versionName = "12.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
