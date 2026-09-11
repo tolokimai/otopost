@@ -22,11 +22,20 @@ class AutoPostRepository(
     // Layanan teks Gemini (persona, plan, caption, transkrip, dll).
     val geminiService = GeminiService { settingsManager.getEffectiveGeminiKey() }
 
-    // Layanan khusus generate GAMBAR via model image Gemini/Imagen.
-    val aiImageService = AiImageService { settingsManager.getEffectiveGeminiKey() }
+    // Layanan khusus generate GAMBAR via model image Gemini/Imagen (model bisa dipilih user).
+    val aiImageService = AiImageService(
+        getApiKey = { settingsManager.getEffectiveGeminiKey() },
+        getPreferredModel = { settingsManager.getEffectiveGeminiImageModel() }
+    )
 
-    // Pencarian gambar dari internet (Openverse, gratis tanpa key).
-    val imageSearchService = ImageSearchService()
+    // Pencarian gambar dari internet (Wikimedia Commons + Openverse bila ada kredensial).
+    val imageSearchService = ImageSearchService(
+        getOpenverseCreds = {
+            val s = settingsManager.settings.value
+            if (s.openverseClientId.isNotBlank() && s.openverseClientSecret.isNotBlank())
+                Pair(s.openverseClientId, s.openverseClientSecret) else null
+        }
+    )
 
     // Publisher ke platform sosial media.
     val socialPublisher = SocialMediaPublisher(settingsManager)
