@@ -29,8 +29,8 @@ data class WebImageResult(
  * Pencarian gambar dari internet ala Google Images / Pinterest.
  *
  * KENAPA DULU ERROR "Tidak ada gambar untuk 'night'": sumber lama (Openverse)
- * kini MEWAJIBKAN token otentikasi (Authorization: Bearer ...) untuk API-nya,
- * sehingga permintaan anonim dari app selalu ditolak -> hasil kosong.
+ * kini MEWAJIBKAN token otentikasi untuk API-nya, sehingga permintaan anonim
+ * dari app selalu ditolak -> hasil kosong.
  *
  * SOLUSI: sumber UTAMA sekarang Wikimedia Commons yang benar-benar tanpa API key
  * & stabil (ratusan juta gambar berlisensi bebas). Openverse tetap dicoba sebagai
@@ -63,10 +63,10 @@ class ImageSearchService {
     }
 
     private fun searchWikimediaCommons(query: String, pageSize: Int): List<WebImageResult> {
-        val encoded = URLEncoder.encode("$query filetype:bitmap", "UTF-8")
+        val encoded = URLEncoder.encode(query + " filetype:bitmap", "UTF-8")
         val limit = pageSize.coerceIn(1, 50)
         val url = "https://commons.wikimedia.org/w/api.php?action=query&format=json&prop=imageinfo" +
-            "&generator=search&gsrsearch=$encoded&gsrnamespace=6&gsrlimit=$limit" +
+            "&generator=search&gsrsearch=" + encoded + "&gsrnamespace=6&gsrlimit=" + limit +
             "&iiprop=url%7Cextmetadata%7Cmime&iiurlwidth=400"
         val request = Request.Builder()
             .url(url)
@@ -77,7 +77,7 @@ class ImageSearchService {
         client.newCall(request).execute().use { response ->
             val raw = response.body?.string() ?: ""
             if (!response.isSuccessful) {
-                Log.w("ImageSearchService", "Commons HTTP ${response.code}: ${raw.take(160)}")
+                Log.w("ImageSearchService", "Commons HTTP " + response.code + ": " + raw.take(160))
                 return emptyList()
             }
             val pages = JSONObject(raw).optJSONObject("query")?.optJSONObject("pages") ?: return emptyList()
@@ -113,7 +113,8 @@ class ImageSearchService {
 
     private fun searchOpenverse(query: String, pageSize: Int): List<WebImageResult> {
         val encoded = URLEncoder.encode(query, "UTF-8")
-        val url = "https://api.openverse.org/v1/images/?q=$encoded&page_size=${pageSize.coerceIn(1, 40)}&mature=false"
+        val size = pageSize.coerceIn(1, 40)
+        val url = "https://api.openverse.org/v1/images/?q=" + encoded + "&page_size=" + size + "&mature=false"
         val request = Request.Builder()
             .url(url)
             .header("User-Agent", userAgent)
@@ -123,7 +124,7 @@ class ImageSearchService {
         client.newCall(request).execute().use { response ->
             val raw = response.body?.string() ?: ""
             if (!response.isSuccessful) {
-                Log.w("ImageSearchService", "Openverse HTTP ${response.code}: ${raw.take(160)}")
+                Log.w("ImageSearchService", "Openverse HTTP " + response.code + ": " + raw.take(160))
                 return emptyList()
             }
             val results = JSONObject(raw).optJSONArray("results") ?: return emptyList()
@@ -162,7 +163,7 @@ class ImageSearchService {
                 .build()
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
-                    Log.w("ImageSearchService", "Download gagal HTTP ${response.code}")
+                    Log.w("ImageSearchService", "Download gagal HTTP " + response.code)
                     return@withContext null
                 }
                 val bytes = response.body?.bytes() ?: return@withContext null
