@@ -490,7 +490,8 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun setDesignAspectRatio(key: String) = updateDesign { it.copy(aspectRatio = key) }
-    fun setDesignTypography(style: String) = updateDesign { it.copy(typographyStyle = style) }
+    // Tipografi = preset lengkap: begitu dipilih, model penulisan (case), efek art, spasi & font langsung diterapkan ke semua elemen.
+    fun setDesignTypography(style: String) = updateDesign { it.copy(typographyStyle = style).withTypographyApplied() }
     fun setDesignBackgroundTheme(theme: String) = updateDesign { it.copy(backgroundTheme = theme) }
     fun setDesignFontFamily(family: String) = updateDesign { it.copy(fontFamily = family) }
     fun setDesignCtaText(text: String) = updateDesign { it.copy(ctaText = text) }
@@ -500,6 +501,14 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
     fun setDesignAccentColor(hex: String) = updateDesign { it.copy(accentColorHex = hex) }
     fun toggleDesignPageNumber() = updateDesign { it.copy(showPageNumber = !it.showPageNumber) }
     fun adjustDesignBaseFontScale(delta: Float) = updateDesign { it.copy(baseFontScale = (it.baseFontScale + delta).coerceIn(0.6f, 2.0f)) }
+
+    // Kolom prompt background AI (guard/sanitizer ada di GeminiService).
+    fun setDesignAiPrompt(text: String) = updateDesign { it.copy(aiBackgroundPrompt = text) }
+    // Template layout: mengatur posisi seluruh elemen sekaligus, lalu re-apply tipografi.
+    fun setDesignLayoutTemplate(name: String) = updateDesign { it.withLayoutTemplate(name).withTypographyApplied() }
+    // Kontrol per-elemen: model penulisan & efek art.
+    fun setElementCase(role: SlideRole, element: CarouselElement, case: TextCase) = mutateElement(role, element) { it.copy(case = case) }
+    fun setElementEffect(role: SlideRole, element: CarouselElement, effect: TextEffect) = mutateElement(role, element) { it.copy(effect = effect) }
 
     fun setWatermarkFromPersona() {
         val p = defaultPersona.value
@@ -605,10 +614,11 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
             val list = _carouselSlides.value.toMutableList()
             if (index in list.indices) {
                 _isGeneratingSlideImage.value = true
-                val theme = _carouselDesign.value.backgroundTheme
-                val ratio = _carouselDesign.value.aspectRatio
+                val design = _carouselDesign.value
+                val theme = design.backgroundTheme
+                val ratio = design.aspectRatio
                 val s = list[index]
-                val res = repository.geminiService.generateSlideImage(s.headline, s.body, theme, s.slideNumber, ratio)
+                val res = repository.geminiService.generateSlideImage(s.headline, s.body, theme, s.slideNumber, ratio, design.aiBackgroundPrompt)
                 list[index] = s.copy(imageBase64 = res.base64Data, imagePrompt = res.promptUsed, themeName = theme)
                 _carouselSlides.value = list
                 _isGeneratingSlideImage.value = false
@@ -620,13 +630,14 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
     fun generateBackgroundsAllSlides() {
         viewModelScope.launch {
             _isGeneratingSlideImage.value = true
-            val theme = _carouselDesign.value.backgroundTheme
-            val ratio = _carouselDesign.value.aspectRatio
+            val design = _carouselDesign.value
+            val theme = design.backgroundTheme
+            val ratio = design.aspectRatio
             val list = _carouselSlides.value.toMutableList()
             var ai = 0
             for (i in list.indices) {
                 val s = list[i]
-                val res = repository.geminiService.generateSlideImage(s.headline, s.body, theme, s.slideNumber, ratio)
+                val res = repository.geminiService.generateSlideImage(s.headline, s.body, theme, s.slideNumber, ratio, design.aiBackgroundPrompt)
                 if (res.isAiGenerated) ai++
                 list[i] = s.copy(imageBase64 = res.base64Data, imagePrompt = res.promptUsed, themeName = theme)
             }
@@ -636,6 +647,7 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    // Auto desain AI: mengatur SEMUA - tema, tipografi (case/efek/spasi), font, DAN posisi/layout - lalu buat background.
     fun autoDesignCarouselWithAi() {
         viewModelScope.launch {
             val niche = (defaultPersona.value?.niche ?: "").lowercase()
@@ -650,8 +662,19 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
                     Triple("Dark Luxury", "Magazine", "Serif")
                 else -> Triple("Gradient Indigo", "Center Stage", "Sans")
             }
-            updateDesign { it.copy(backgroundTheme = picked.first, typographyStyle = picked.second, fontFamily = picked.third) }
-            showMessage("🤖 Auto desain: ${picked.first} • ${picked.second}. Membuat background...")
+            val template = when {
+                niche.contains("tech") || niche.contains("bisnis") || niche.contains("produktivitas") || niche.contains("startup") -> "Top Heading"
+                niche.contains("beauty") || niche.contains("fashion") || niche.contains("lifestyle") || niche.contains("wellness") -> "Big Quote"
+                niche.contains("gaming") || niche.contains("crypto") || niche.contains("ai") || niche.contains("web3") -> "Bottom Bar"
+                niche.contains("luxury") || niche.contains("finance") || niche.contains("keuangan") || niche.contains("invest") -> "Left Aligned"
+                else -> "Classic Center"
+            }
+            updateDesign {
+                it.copy(backgroundTheme = picked.first, typographyStyle = picked.second, fontFamily = picked.third)
+                    .withLayoutTemplate(template)
+                    .withTypographyApplied()
+            }
+            showMessage("🤖 Auto desain lengkap: ${picked.first} • ${picked.second} • layout $template. Membuat background...")
             generateBackgroundsAllSlides()
         }
     }

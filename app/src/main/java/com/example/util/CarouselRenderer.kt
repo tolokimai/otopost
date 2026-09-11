@@ -26,6 +26,8 @@ import com.example.data.local.entity.CarouselSlide
 import com.example.data.local.entity.ElementLayout
 import com.example.data.local.entity.SlideRole
 import com.example.data.local.entity.TextAlignH
+import com.example.data.local.entity.TextCase
+import com.example.data.local.entity.TextEffect
 import java.io.File
 import java.io.FileOutputStream
 
@@ -34,6 +36,21 @@ import java.io.FileOutputStream
  * untuk hasil download, sehingga preview == file yang tersimpan (WYSIWYG).
  */
 object CarouselRenderer {
+
+    /** Render background + scrim saja (tanpa teks/elemen). Dipakai editor Canva sebagai lapisan dasar. */
+    fun renderBackground(
+        context: Context,
+        design: CarouselDesign,
+        slide: CarouselSlide,
+        slideNumber: Int
+    ): Bitmap {
+        val spec = CarouselPresets.ratioSpec(design.aspectRatio)
+        val bitmap = Bitmap.createBitmap(spec.width, spec.height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        drawBackground(canvas, spec.width, spec.height, design, slide, slideNumber)
+        drawScrim(canvas, spec.width, spec.height, design)
+        return bitmap
+    }
 
     fun render(
         context: Context,
@@ -46,11 +63,8 @@ object CarouselRenderer {
         val spec = CarouselPresets.ratioSpec(design.aspectRatio)
         val w = spec.width
         val h = spec.height
-        val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val bitmap = renderBackground(context, design, slide, slideNumber)
         val canvas = Canvas(bitmap)
-
-        drawBackground(canvas, w, h, design, slide, slideNumber)
-        drawScrim(canvas, w, h, design)
 
         val baseSizePx = w * 0.052f * design.baseFontScale
 
@@ -77,6 +91,13 @@ object CarouselRenderer {
         return slides.mapIndexed { index, slide ->
             render(context, design, slide, CarouselPresets.roleForSlide(index, total), index + 1, total)
         }
+    }
+
+    private fun applyCase(text: String, case: TextCase): String = when (case) {
+        TextCase.UPPER -> text.uppercase()
+        TextCase.LOWER -> text.lowercase()
+        TextCase.TITLE -> text.split(" ").joinToString(" ") { word -> if (word.isNotEmpty()) word.substring(0, 1).uppercase() + word.substring(1).lowercase() else word }
+        else -> text
     }
 
     private fun drawBackground(canvas: Canvas, w: Int, h: Int, design: CarouselDesign, slide: CarouselSlide, slideNumber: Int) {
@@ -166,7 +187,7 @@ object CarouselRenderer {
         tp.textSize = sizePx
         tp.color = parseColor(el.colorHex ?: design.textColorHex)
         tp.isUnderlineText = el.underline
-        tp.setShadowLayer(sizePx * 0.12f, 0f, sizePx * 0.04f, Color.argb(150, 0, 0, 0))
+        tp.letterSpacing = el.letterSpacing
         return tp
     }
 
@@ -176,24 +197,54 @@ object CarouselRenderer {
         else -> Layout.Alignment.ALIGN_CENTER
     }
 
-    private fun drawTextBox(canvas: Canvas, w: Int, h: Int, text: String, el: ElementLayout, design: CarouselDesign, baseSizePx: Float) {
-        if (text.isBlank()) return
-        val tp = buildTextPaint(design, el, baseSizePx * el.fontScale)
-        val boxWidth = (el.widthFraction * w).toInt().coerceIn(20, w)
-        val sl = StaticLayout.Builder.obtain(text, 0, text.length, tp, boxWidth)
-            .setAlignment(alignOf(el.align))
+    private fun buildLayout(text: String, tp: TextPaint, width: Int, align: TextAlignH): StaticLayout =
+        StaticLayout.Builder.obtain(text, 0, text.length, tp, width)
+            .setAlignment(alignOf(align))
             .setLineSpacing(0f, 1.06f)
             .setIncludePad(false)
             .build()
+
+    private fun drawTextBox(canvas: Canvas, w: Int, h: Int, rawText: String, el: ElementLayout, design: CarouselDesign, baseSizePx: Float) {
+        val text = applyCase(rawText, el.case)
+        if (text.isBlank()) return
+        val size = baseSizePx * el.fontScale
+        val tp = buildTextPaint(design, el, size)
+        val accent = parseColor(design.accentColorHex)
+        when (el.effect) {
+            TextEffect.SHADOW -> tp.setShadowLayer(size * 0.18f, 0f, size * 0.06f, Color.argb(180, 0, 0, 0))
+            TextEffect.NEON -> { tp.setShadowLayer(size * 0.55f, 0f, 0f, accent); tp.color = Color.WHITE }
+            TextEffect.GRADIENT -> tp.shader = LinearGradient(0f, 0f, 0f, size * 1.4f, intArrayOf(parseColor(el.colorHex ?: design.textColorHex), accent), null, Shader.TileMode.CLAMP)
+            else -> {}
+        }
+        val boxWidth = (el.widthFraction * w).toInt().coerceIn(20, w)
+        val sl = buildLayout(text, tp, boxWidth, el.align)
         val left = el.xFraction * w - boxWidth / 2f
         val top = el.yFraction * h - sl.height / 2f
+
+        if (el.effect == TextEffect.HIGHLIGHT) {
+            val bg = Paint(Paint.ANTI_ALIAS_FLAG)
+            bg.color = Color.argb(150, 0, 0, 0)
+            val pad = size * 0.35f
+            val rect = RectF(left - pad, top - pad, left + boxWidth + pad, top + sl.height + pad)
+            canvas.drawRoundRect(rect, size * 0.3f, size * 0.3f, bg)
+        }
+
         canvas.save()
         canvas.translate(left, top)
+        if (el.effect == TextEffect.OUTLINE) {
+            val stroke = buildTextPaint(design, el, size)
+            stroke.style = Paint.Style.STROKE
+            stroke.strokeWidth = size * 0.09f
+            stroke.color = Color.BLACK
+            stroke.clearShadowLayer()
+            buildLayout(text, stroke, boxWidth, el.align).draw(canvas)
+        }
         sl.draw(canvas)
         canvas.restore()
     }
 
-    private fun drawPill(canvas: Canvas, w: Int, h: Int, text: String, el: ElementLayout, design: CarouselDesign, baseSizePx: Float) {
+    private fun drawPill(canvas: Canvas, w: Int, h: Int, rawText: String, el: ElementLayout, design: CarouselDesign, baseSizePx: Float) {
+        val text = applyCase(rawText, el.case)
         if (text.isBlank()) return
         val size = baseSizePx * el.fontScale
         val tp = buildTextPaint(design, el, size)
