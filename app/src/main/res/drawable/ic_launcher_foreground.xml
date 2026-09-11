@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    
+    <!-- Outer Glow / Halo -->
+    <path
+        android:pathData="M54,24 C37.4,24 24,37.4 24,54 C24,70.6 37.4,84 54,84 C70.6,84 84,70.6 84,54 C84,37.4 70.6,24 54,24 Z"
+        android:strokeWidth="3.5"
+        android:strokeColor="#38BDF8"
+        android:fillColor="#1500E5FF" />
+
+    <!-- Play & Share Symbol -->
+    <path
+        android:pathData="M46,38 L68,54 L46,70 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="46"
+                android:startY="38"
+                android:endX="68"
+                android:endY="70"
+                android:type="linear">
+                <item android:color="#F43F5E" android:offset="0.0" />
+                <item android:color="#EC4899" android:offset="0.5" />
+                <item android:color="#A855F7" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- AI Sparkle Top Right -->
+    <path
+        android:pathData="M72,32 L74,26 L76,32 L82,34 L76,36 L74,42 L72,36 L66,34 Z"
+        android:fillColor="#FBBF24" />
+
+    <!-- AI Sparkle Bottom Left -->
+    <path
+        android:pathData="M32,68 L33.5,63.5 L35,68 L39.5,69.5 L35,71 L33.5,75.5 L32,71 L27.5,69.5 Z"
+        android:fillColor="#38BDF8" />
+        
+    <!-- Schedule Clock Arc -->
+    <path
+        android:pathData="M54,29 A25,25 0 0,1 79,54"
+        android:strokeWidth="2.5"
+        android:strokeColor="#FFFFFF"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+</vector>

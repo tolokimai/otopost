@@ -1,0 +1,6 @@
+{
+  "name": "AutoPost Studio",
+  "description": "Auto-create and schedule viral TikTok, Reels, and Shorts content with AI persona, smart plans, podcast clipping, carousel maker, and automated publishing.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
