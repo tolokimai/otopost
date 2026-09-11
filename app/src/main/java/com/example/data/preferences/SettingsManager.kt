@@ -34,7 +34,9 @@ data class AppSettings(
     val savedStylesJson: String = "", // Gaya carousel tersimpan bernama (JSON array {name, design})
     val openverseClientId: String = "", // Openverse OAuth client_id (opsional, untuk cari gambar internet)
     val openverseClientSecret: String = "", // Openverse OAuth client_secret (opsional)
-    val geminiImageModel: String = "" // Model gambar Gemini pilihan user (kosong = otomatis)
+    val geminiImageModel: String = "", // Model gambar Gemini pilihan user (kosong = otomatis)
+    val defaultClipAspectRatio: String = "9:16", // Rasio default hasil potong podcast: "9:16" atau "16:9"
+    val autoPickBestPodcast: Boolean = true // Jika true, mesin otomatis memilih video paling relevan
 )
 
 /** Satu gaya carousel tersimpan yang bisa diberi nama & dipakai ulang. */
@@ -83,7 +85,9 @@ class SettingsManager(context: Context) {
             savedStylesJson = prefs.getString("saved_styles_json", "") ?: "",
             openverseClientId = prefs.getString("openverse_client_id", "") ?: "",
             openverseClientSecret = prefs.getString("openverse_client_secret", "") ?: "",
-            geminiImageModel = prefs.getString("gemini_image_model", "") ?: ""
+            geminiImageModel = prefs.getString("gemini_image_model", "") ?: "",
+            defaultClipAspectRatio = prefs.getString("default_clip_aspect_ratio", "9:16") ?: "9:16",
+            autoPickBestPodcast = prefs.getBoolean("auto_pick_best_podcast", true)
         )
     }
 
@@ -113,6 +117,8 @@ class SettingsManager(context: Context) {
             putString("openverse_client_id", newSettings.openverseClientId)
             putString("openverse_client_secret", newSettings.openverseClientSecret)
             putString("gemini_image_model", newSettings.geminiImageModel)
+            putString("default_clip_aspect_ratio", newSettings.defaultClipAspectRatio)
+            putBoolean("auto_pick_best_podcast", newSettings.autoPickBestPodcast)
             apply()
         }
         _settings.value = newSettings
@@ -130,6 +136,11 @@ class SettingsManager(context: Context) {
 
     /** Model gambar Gemini pilihan user (kosong = biarkan service memakai urutan default). */
     fun getEffectiveGeminiImageModel(): String = _settings.value.geminiImageModel.trim()
+
+    /** Menyimpan rasio klip podcast default ("9:16" atau "16:9"). */
+    fun saveDefaultClipAspectRatio(ratio: String) {
+        updateSettings(_settings.value.copy(defaultClipAspectRatio = ratio))
+    }
 
     /** Memuat desain carousel favorit/default yang tersimpan (atau default bawaan). */
     fun loadFavoriteCarouselDesign(): CarouselDesign =
