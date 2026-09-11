@@ -205,6 +205,12 @@ object CarouselRenderer {
             .setIncludePad(false)
             .build()
 
+    /**
+     * Menggambar blok teks. PENTING: posisi memakai PUSAT KONTEN sebenarnya
+     * (bukan pusat kotak lebar tetap), sehingga elemen kecil seperti nomor
+     * halaman tidak lagi setengah keluar kanvas, dan posisinya konsisten
+     * dengan editor. Konten juga di-clamp agar tidak terpotong tepi.
+     */
     private fun drawTextBox(canvas: Canvas, w: Int, h: Int, rawText: String, el: ElementLayout, design: CarouselDesign, baseSizePx: Float) {
         val text = applyCase(rawText, el.case)
         if (text.isBlank()) return
@@ -217,10 +223,18 @@ object CarouselRenderer {
             TextEffect.GRADIENT -> tp.shader = LinearGradient(0f, 0f, 0f, size * 1.4f, intArrayOf(parseColor(el.colorHex ?: design.textColorHex), accent), null, Shader.TileMode.CLAMP)
             else -> {}
         }
-        val boxWidth = (el.widthFraction * w).toInt().coerceIn(20, w)
+        val wrapWidth = (el.widthFraction * w).toInt().coerceIn(20, w)
+        // Ukur lebar konten nyata (baris terpanjang) untuk positioning berbasis pusat konten.
+        val measure = buildLayout(text, tp, wrapWidth, el.align)
+        var contentW = 0f
+        for (i in 0 until measure.lineCount) contentW = maxOf(contentW, measure.getLineWidth(i))
+        val boxWidth = (contentW.toInt().coerceIn(1, wrapWidth)) + 2
         val sl = buildLayout(text, tp, boxWidth, el.align)
-        val left = el.xFraction * w - boxWidth / 2f
+        var left = el.xFraction * w - boxWidth / 2f
         val top = el.yFraction * h - sl.height / 2f
+        // Jaga tetap di dalam kanvas (tidak terpotong tepi kiri/kanan).
+        val maxLeft = (w - boxWidth).toFloat().coerceAtLeast(0f)
+        left = left.coerceIn(0f, maxLeft)
 
         if (el.effect == TextEffect.HIGHLIGHT) {
             val bg = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -286,8 +300,8 @@ object CarouselRenderer {
     }
 
     /**
-     * Indikator geser (swipe) yang sepenuhnya bisa dikustom: teks, emoji bawaan,
-     * atau ikon PNG upload; bisa ikon-saja, dimatikan, atau ditampilkan di slide terakhir.
+     * Indikator geser (swipe): teks polos, emoji bawaan, atau ikon PNG upload.
+     * Sesuai permintaan: TANPA background & TANPA garis tepi -> hanya teks/ikon.
      */
     private fun drawSwipe(
         canvas: Canvas,
@@ -305,7 +319,6 @@ object CarouselRenderer {
 
         val size = baseSizePx * el.fontScale
         val tp = buildTextPaint(design, el, size)
-        tp.clearShadowLayer()
         tp.textAlign = Paint.Align.LEFT
 
         val text = if (design.swipeIconOnly) "" else applyCase(design.swipeText, el.case)
@@ -329,24 +342,10 @@ object CarouselRenderer {
         if (contentW <= 0f) return
 
         val fm = tp.fontMetrics
-        val padH = size * 0.6f
-        val padV = size * 0.4f
-        val contentH = maxOf(fm.descent - fm.ascent, iconSize)
-        val pillW = contentW + padH * 2
-        val pillH = contentH + padV * 2
         val cx = el.xFraction * w
         val cy = el.yFraction * h
-        val rect = RectF(cx - pillW / 2f, cy - pillH / 2f, cx + pillW / 2f, cy + pillH / 2f)
 
-        val bg = Paint(Paint.ANTI_ALIAS_FLAG)
-        bg.color = Color.argb(150, 0, 0, 0)
-        canvas.drawRoundRect(rect, pillH / 2f, pillH / 2f, bg)
-        val border = Paint(Paint.ANTI_ALIAS_FLAG)
-        border.style = Paint.Style.STROKE
-        border.strokeWidth = size * 0.06f
-        border.color = parseColor(design.accentColorHex)
-        canvas.drawRoundRect(rect, pillH / 2f, pillH / 2f, border)
-
+        // Tanpa background & tanpa garis tepi: langsung gambar teks/ikon polos.
         var drawX = cx - contentW / 2f
         val baselineY = cy - (fm.ascent + fm.descent) / 2f
         if (text.isNotBlank()) {
