@@ -36,6 +36,13 @@ enum class StudioSubMode {
     AI_VIDEO
 }
 
+/** Satu hasil pencarian gambar internet siap ditampilkan di grid Studio. */
+data class StudioImageResult(
+    val fullUrl: String,
+    val thumbBase64: String?,
+    val title: String
+)
+
 class AutoPostViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = (application as AutoPostApplication).repository
@@ -368,6 +375,12 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
     private val _isGeneratingSlideImage = MutableStateFlow(false)
     val isGeneratingSlideImage = _isGeneratingSlideImage.asStateFlow()
 
+    // --- Pencarian gambar internet (Openverse) ---
+    private val _imageSearchResults = MutableStateFlow<List<StudioImageResult>>(emptyList())
+    val imageSearchResults = _imageSearchResults.asStateFlow()
+    private val _isSearchingImages = MutableStateFlow(false)
+    val isSearchingImages = _isSearchingImages.asStateFlow()
+
     fun setCarouselTheme(theme: String) {
         _carouselTheme.value = theme
     }
@@ -521,7 +534,7 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
     fun toggleDesignPageNumber() = updateDesign { it.copy(showPageNumber = !it.showPageNumber) }
     fun adjustDesignBaseFontScale(delta: Float) = updateDesign { it.copy(baseFontScale = (it.baseFontScale + delta).coerceIn(0.6f, 2.0f)) }
 
-    // Kolom prompt background AI (guard/sanitizer ada di GeminiService).
+    // Kolom prompt background AI (guard/sanitizer ada di AiImageService).
     fun setDesignAiPrompt(text: String) = updateDesign { it.copy(aiBackgroundPrompt = text) }
     // Template layout: mengatur posisi seluruh elemen sekaligus, lalu re-apply tipografi.
     fun setDesignLayoutTemplate(name: String) = updateDesign { it.withLayoutTemplate(name).withTypographyApplied() }
@@ -556,6 +569,8 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
     fun toggleElementUnderline(role: SlideRole, element: CarouselElement) = mutateElement(role, element) { it.copy(underline = !it.underline) }
     fun toggleElementVisible(role: SlideRole, element: CarouselElement) = mutateElement(role, element) { it.copy(visible = !it.visible) }
     fun adjustElementScale(role: SlideRole, element: CarouselElement, delta: Float) = mutateElement(role, element) { it.copy(fontScale = (it.fontScale + delta).coerceIn(0.4f, 3.0f)) }
+    // Set skala absolut (dipakai gesture cubit/pinch di editor kanvas WYSIWYG).
+    fun setElementScale(role: SlideRole, element: CarouselElement, scale: Float) = mutateElement(role, element) { it.copy(fontScale = scale.coerceIn(0.4f, 3.0f)) }
     fun setElementAlign(role: SlideRole, element: CarouselElement, align: TextAlignH) = mutateElement(role, element) { it.copy(align = align) }
 
     fun resetRoleLayout(role: SlideRole) {
@@ -630,6 +645,8 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    // AI generate background: kini benar-benar memanggil model gambar (AiImageService).
+    // Jika AI GAGAL, kita TIDAK menimpa background & memberi pesan jujur berisi alasan.
     fun generateBackgroundForSlide(index: Int) {
         viewModelScope.launch {
             val list = _carouselSlides.value.toMutableList()
@@ -639,11 +656,15 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
                 val theme = design.backgroundTheme
                 val ratio = design.aspectRatio
                 val s = list[index]
-                val res = repository.geminiService.generateSlideImage(s.headline, s.body, theme, s.slideNumber, ratio, design.aiBackgroundPrompt)
-                list[index] = s.copy(imageBase64 = res.base64Data, imagePrompt = res.promptUsed, themeName = theme)
-                _carouselSlides.value = list
+                val res = repository.aiImageService.generateBackground(s.headline, theme, ratio, design.aiBackgroundPrompt)
+                if (res.isAiGenerated && !res.base64.isNullOrBlank()) {
+                    list[index] = s.copy(imageBase64 = res.base64, imagePrompt = design.aiBackgroundPrompt, themeName = theme)
+                    _carouselSlides.value = list
+                    showMessage("\u2728 Gambar AI (${res.modelUsed}) berhasil digenerate untuk Slide ${index + 1}!")
+                } else {
+                    showMessage("\u274c Gagal generate gambar AI: ${res.errorReason ?: "tidak diketahui"}. Coba fitur 'Cari Gambar' dari internet, atau cek API key/model di Settings.")
+                }
                 _isGeneratingSlideImage.value = false
-                showMessage(if (res.isAiGenerated) "\u2728 Background AI dibuat utk Slide ${index + 1}!" else "\ud83c\udfa8 Background '$theme' dipasang di Slide ${index + 1}!")
             }
         }
     }
@@ -656,16 +677,88 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
             val ratio = design.aspectRatio
             val list = _carouselSlides.value.toMutableList()
             var ai = 0
+            var lastError: String? = null
             for (i in list.indices) {
                 val s = list[i]
-                val res = repository.geminiService.generateSlideImage(s.headline, s.body, theme, s.slideNumber, ratio, design.aiBackgroundPrompt)
-                if (res.isAiGenerated) ai++
-                list[i] = s.copy(imageBase64 = res.base64Data, imagePrompt = res.promptUsed, themeName = theme)
+                val res = repository.aiImageService.generateBackground(s.headline, theme, ratio, design.aiBackgroundPrompt)
+                if (res.isAiGenerated && !res.base64.isNullOrBlank()) {
+                    ai++
+                    list[i] = s.copy(imageBase64 = res.base64, imagePrompt = design.aiBackgroundPrompt, themeName = theme)
+                } else {
+                    lastError = res.errorReason
+                }
             }
             _carouselSlides.value = list
             _isGeneratingSlideImage.value = false
-            showMessage(if (ai > 0) "\u2728 $ai background AI berhasil dibuat!" else "\ud83c\udfa8 Semua background '$theme' dipasang!")
+            if (ai > 0) {
+                showMessage("\u2728 $ai/${list.size} background AI berhasil digenerate!")
+            } else {
+                showMessage("\u274c Gagal generate gambar AI: ${lastError ?: "tidak diketahui"}. Coba fitur 'Cari Gambar' dari internet, atau cek API key/model di Settings.")
+            }
         }
+    }
+
+    // ============================================================
+    // PENCARIAN GAMBAR INTERNET (keyword -> pilih -> jadi background)
+    // ============================================================
+    fun searchBackgroundImages(query: String) {
+        val q = query.trim()
+        if (q.isBlank()) {
+            showMessage("Ketik kata kunci gambar dulu, mis. 'mountain sunset minimal'.")
+            return
+        }
+        viewModelScope.launch {
+            _isSearchingImages.value = true
+            _imageSearchResults.value = emptyList()
+            val found = repository.imageSearchService.search(q, 24)
+            if (found.isEmpty()) {
+                _isSearchingImages.value = false
+                showMessage("Tidak ada gambar untuk '$q'. Coba kata kunci lain (disarankan bahasa Inggris).")
+                return@launch
+            }
+            val limited = found.take(18)
+            val mapped = limited.map { r ->
+                val thumb = repository.imageSearchService.downloadAsBase64(r.thumbnailUrl)
+                StudioImageResult(fullUrl = r.fullUrl, thumbBase64 = thumb, title = r.title)
+            }
+            _imageSearchResults.value = mapped
+            _isSearchingImages.value = false
+            showMessage("Ditemukan ${mapped.size} gambar. Ketuk salah satu untuk memasangnya sebagai background.")
+        }
+    }
+
+    fun applySearchImageToSlide(index: Int, fullUrl: String) {
+        viewModelScope.launch {
+            _isGeneratingSlideImage.value = true
+            val b64 = repository.imageSearchService.downloadAsBase64(fullUrl)
+            if (b64 != null) {
+                val list = _carouselSlides.value.toMutableList()
+                if (index in list.indices) {
+                    list[index] = list[index].copy(imageBase64 = b64)
+                    _carouselSlides.value = list
+                    showMessage("\ud83d\uddbc\ufe0f Gambar internet dipasang sebagai background Slide ${index + 1}.")
+                }
+            } else showMessage("Gagal mengunduh gambar. Coba gambar lain.")
+            _isGeneratingSlideImage.value = false
+        }
+    }
+
+    fun applySearchImageToAllSlides(fullUrl: String) {
+        viewModelScope.launch {
+            _isGeneratingSlideImage.value = true
+            val b64 = repository.imageSearchService.downloadAsBase64(fullUrl)
+            if (b64 != null) {
+                val list = _carouselSlides.value.toMutableList()
+                for (i in list.indices) list[i] = list[i].copy(imageBase64 = b64)
+                _carouselSlides.value = list
+                showMessage("\ud83d\uddbc\ufe0f Gambar internet dipasang ke semua slide.")
+            } else showMessage("Gagal mengunduh gambar. Coba gambar lain.")
+            _isGeneratingSlideImage.value = false
+        }
+    }
+
+    fun clearImageSearch() {
+        _imageSearchResults.value = emptyList()
     }
 
     // Auto desain AI: mengatur SEMUA - tema, tipografi (case/efek/spasi), font, DAN posisi/layout - lalu buat background.
