@@ -368,4 +368,32 @@ object CarouselExporter {
         val safeBase = baseName.replace(Regex("[^A-Za-z0-9_-]"), "_").take(40).ifBlank { "carousel" }
         val stamp = System.currentTimeMillis()
         bitmaps.forEachIndexed { index, bmp ->
-            val name = safeBase + "
+            val name = safeBase + "_" + stamp + "_slide" + (index + 1) + ".png"
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    val resolver = context.contentResolver
+                    val values = ContentValues().apply {
+                        put(MediaStore.Images.Media.DISPLAY_NAME, name)
+                        put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+                        put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/AutoPostStudio")
+                        put(MediaStore.Images.Media.IS_PENDING, 1)
+                    }
+                    val uri: Uri? = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                    if (uri != null) {
+                        resolver.openOutputStream(uri)?.use { os -> bmp.compress(Bitmap.CompressFormat.PNG, 100, os) }
+                        val done = ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }
+                        resolver.update(uri, done, null, null)
+                        saved.add(uri.toString())
+                    }
+                } else {
+                    val dir = File(context.getExternalFilesDir(Environment.DIRECTORY_PICTURES), "AutoPostStudio")
+                    if (!dir.exists()) dir.mkdirs()
+                    val file = File(dir, name)
+                    FileOutputStream(file).use { os -> bmp.compress(Bitmap.CompressFormat.PNG, 100, os) }
+                    saved.add(file.absolutePath)
+                }
+            } catch (e: Exception) { /* lewati slide ini */ }
+        }
+        return saved
+    }
+}
