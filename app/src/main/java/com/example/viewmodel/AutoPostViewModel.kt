@@ -280,7 +280,7 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
     private val _studioContentHook = MutableStateFlow("99% Orang Salah Paham Soal Ini!")
     val studioContentHook = _studioContentHook.asStateFlow()
 
-    private val _studioContentCaption = MutableStateFlow("Simak penjelasan lengkapnya sampai habis. Share ke temanmu yang butuh insight ini! 👇")
+    private val _studioContentCaption = MutableStateFlow("Simak penjelasan lengkapnya sampai habis. Share ke temanmu yang butuh insight ini! \ud83d\udc47")
     val studioContentCaption = _studioContentCaption.asStateFlow()
 
     private val _studioContentHashtags = MutableStateFlow("#creator #fyp #contenttips #viral")
@@ -328,11 +328,11 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
     // 4a. CAROUSEL STUDIO STATE
     private val _carouselSlides = MutableStateFlow<List<CarouselSlide>>(
         listOf(
-            CarouselSlide(1, "5 Langkah Sukses Content Creation", "Panduan praktis dari nol untuk pemula di 2026.", "Geser ➡️", themeName = "Minimalist Tech"),
-            CarouselSlide(2, "01. Temukan Niche Spesifik", "Fokus pada satu problem audiens yang belum banyak dibahas orang.", "Poin 2 krusial ➡️", themeName = "Minimalist Tech"),
-            CarouselSlide(3, "02. Kuasai Hook 3 Detik", "Buat kalimat pembuka yang memicu rasa ingin tahu (curiosity gap).", "Next langkah 3 ➡️", themeName = "Minimalist Tech"),
-            CarouselSlide(4, "03. Konsistensi Posting", "Jadwalkan postinganmu secara otomatis tiap hari di jam optimal.", "Satu slide lagi ➡️", themeName = "Minimalist Tech"),
-            CarouselSlide(5, "Simpan Post Ini!", "Bagikan postingan ini ke teman kreatormu & follow untuk tips lainnya.", "Save 📌", themeName = "Minimalist Tech")
+            CarouselSlide(1, "5 Langkah Sukses Content Creation", "Panduan praktis dari nol untuk pemula di 2026.", "", themeName = "Minimalist Tech"),
+            CarouselSlide(2, "01. Temukan Niche Spesifik", "Fokus pada satu problem audiens yang belum banyak dibahas orang.", "", themeName = "Minimalist Tech"),
+            CarouselSlide(3, "02. Kuasai Hook 3 Detik", "Buat kalimat pembuka yang memicu rasa ingin tahu (curiosity gap).", "", themeName = "Minimalist Tech"),
+            CarouselSlide(4, "03. Konsistensi Posting", "Jadwalkan postinganmu secara otomatis tiap hari di jam optimal.", "", themeName = "Minimalist Tech"),
+            CarouselSlide(5, "Simpan Post Ini!", "Bagikan postingan ini ke teman kreatormu & follow untuk tips lainnya.", "", themeName = "Minimalist Tech")
         )
     )
     val carouselSlides = _carouselSlides.asStateFlow()
@@ -391,7 +391,7 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
     fun addCarouselSlide() {
         val list = _carouselSlides.value.toMutableList()
         val nextNum = list.size + 1
-        list.add(CarouselSlide(nextNum, "Slide $nextNum Poin Baru", "Tambahkan penjelasan detail slide di sini.", "Geser ➡️", themeName = _carouselTheme.value))
+        list.add(CarouselSlide(nextNum, "Slide $nextNum Poin Baru", "Tambahkan penjelasan detail slide di sini.", "", themeName = _carouselTheme.value))
         _carouselSlides.value = list
     }
 
@@ -444,9 +444,9 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
                 _carouselSlides.value = list
                 _isGeneratingSlideImage.value = false
                 val msg = if (imgResult.isAiGenerated) {
-                    "✨ Background AI Imagen 3 berhasil dibuat untuk Slide ${slide.slideNumber}!"
+                    "\u2728 Background AI Imagen 3 berhasil dibuat untuk Slide ${slide.slideNumber}!"
                 } else {
-                    "🎨 Background '$currentTheme' berhasil dibuat untuk Slide ${slide.slideNumber}!"
+                    "\ud83c\udfa8 Background '$currentTheme' berhasil dibuat untuk Slide ${slide.slideNumber}!"
                 }
                 showMessage(msg)
             }
@@ -474,9 +474,9 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
             _carouselSlides.value = list
             _isGeneratingSlideImage.value = false
             val msg = if (aiCount > 0) {
-                "✨ $aiCount background AI Imagen 3 & grafis slide berhasil dibuat!"
+                "\u2728 $aiCount background AI Imagen 3 & grafis slide berhasil dibuat!"
             } else {
-                "🎨 Semua background '$currentTheme' berhasil dipasang pada slide!"
+                "\ud83c\udfa8 Semua background '$currentTheme' berhasil dipasang pada slide!"
             }
             showMessage(msg)
         }
@@ -496,6 +496,25 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
     fun setDesignFontFamily(family: String) = updateDesign { it.copy(fontFamily = family) }
     fun setDesignCtaText(text: String) = updateDesign { it.copy(ctaText = text) }
     fun setDesignCtaIcon(icon: String) = updateDesign { it.copy(ctaIcon = icon) }
+    // --- Indikator geser (swipe): teks, ikon emoji bawaan, atau ikon PNG upload; bisa ikon-saja / dimatikan ---
+    fun toggleDesignSwipe() = updateDesign { it.copy(swipeEnabled = !it.swipeEnabled) }
+    fun setDesignSwipeText(text: String) = updateDesign { it.copy(swipeText = text) }
+    fun setDesignSwipeBuiltinIcon(icon: String) = updateDesign { it.copy(swipeIconBuiltin = icon, swipeIconBase64 = null) }
+    fun toggleSwipeIconOnly() = updateDesign { it.copy(swipeIconOnly = !it.swipeIconOnly) }
+    fun toggleSwipeShowOnLast() = updateDesign { it.copy(swipeShowOnLastSlide = !it.swipeShowOnLastSlide) }
+    fun clearSwipeIcon() {
+        updateDesign { it.copy(swipeIconBase64 = null) }
+        showMessage("Ikon PNG geser dihapus.")
+    }
+    fun setSwipeIconFromUri(uri: Uri) {
+        viewModelScope.launch {
+            val b64 = uriToBase64(uri)
+            if (b64 != null) {
+                updateDesign { it.copy(swipeIconBase64 = b64) }
+                showMessage("Ikon PNG geser dipasang.")
+            } else showMessage("Gagal membaca file ikon.")
+        }
+    }
     fun setDesignWatermark(text: String) = updateDesign { it.copy(watermarkText = text) }
     fun setDesignTextColor(hex: String) = updateDesign { it.copy(textColorHex = hex) }
     fun setDesignAccentColor(hex: String) = updateDesign { it.copy(accentColorHex = hex) }
@@ -509,6 +528,8 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
     // Kontrol per-elemen: model penulisan & efek art.
     fun setElementCase(role: SlideRole, element: CarouselElement, case: TextCase) = mutateElement(role, element) { it.copy(case = case) }
     fun setElementEffect(role: SlideRole, element: CarouselElement, effect: TextEffect) = mutateElement(role, element) { it.copy(effect = effect) }
+    // Warna kustom per-elemen (null = ikut warna teks global).
+    fun setElementColor(role: SlideRole, element: CarouselElement, hex: String?) = mutateElement(role, element) { it.copy(colorHex = hex) }
 
     fun setWatermarkFromPersona() {
         val p = defaultPersona.value
@@ -622,7 +643,7 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
                 list[index] = s.copy(imageBase64 = res.base64Data, imagePrompt = res.promptUsed, themeName = theme)
                 _carouselSlides.value = list
                 _isGeneratingSlideImage.value = false
-                showMessage(if (res.isAiGenerated) "✨ Background AI dibuat utk Slide ${index + 1}!" else "🎨 Background '$theme' dipasang di Slide ${index + 1}!")
+                showMessage(if (res.isAiGenerated) "\u2728 Background AI dibuat utk Slide ${index + 1}!" else "\ud83c\udfa8 Background '$theme' dipasang di Slide ${index + 1}!")
             }
         }
     }
@@ -643,7 +664,7 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
             }
             _carouselSlides.value = list
             _isGeneratingSlideImage.value = false
-            showMessage(if (ai > 0) "✨ $ai background AI berhasil dibuat!" else "🎨 Semua background '$theme' dipasang!")
+            showMessage(if (ai > 0) "\u2728 $ai background AI berhasil dibuat!" else "\ud83c\udfa8 Semua background '$theme' dipasang!")
         }
     }
 
@@ -674,7 +695,7 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
                     .withLayoutTemplate(template)
                     .withTypographyApplied()
             }
-            showMessage("🤖 Auto desain lengkap: ${picked.first} • ${picked.second} • layout $template. Membuat background...")
+            showMessage("\ud83e\udd16 Auto desain lengkap: ${picked.first} \u2022 ${picked.second} \u2022 layout $template. Membuat background...")
             generateBackgroundsAllSlides()
         }
     }
@@ -693,7 +714,7 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
             }
             _isExportingCarousel.value = false
             if (saved.isEmpty()) showMessage("Gagal menyimpan gambar.")
-            else showMessage("✅ ${saved.size} slide tersimpan di galeri (folder Pictures/AutoPostStudio).")
+            else showMessage("\u2705 ${saved.size} slide tersimpan di galeri (folder Pictures/AutoPostStudio).")
         }
     }
 
@@ -819,7 +840,7 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
     }
 
     // 4c. SELF VIDEO STUDIO STATE
-    private val _selfVideoHookText = MutableStateFlow("Trik Rahasia 3 Detik Pertama 💥")
+    private val _selfVideoHookText = MutableStateFlow("Trik Rahasia 3 Detik Pertama \ud83d\udca5")
     val selfVideoHookText = _selfVideoHookText.asStateFlow()
 
     private val _selfVideoSubtitles = MutableStateFlow<List<String>>(
@@ -938,7 +959,7 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
             _generatedVideoResult.value = result
             _studioContentHook.value = result.viralHook
             _studioContentTitle.value = "AI Video: " + _aiVideoPrompt.value.take(30)
-            _studioContentCaption.value = "Video dibuat menggunakan AI Veo 3. Keren banget hasilnya! Gimana menurutmu? 👇"
+            _studioContentCaption.value = "Video dibuat menggunakan AI Veo 3. Keren banget hasilnya! Gimana menurutmu? \ud83d\udc47"
             _isGeneratingAiVideo.value = false
             showMessage("Video Veo 3 berhasil di-generate!")
         }
