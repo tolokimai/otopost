@@ -133,7 +133,16 @@ private fun hexColor(hex: String?, fallback: Color): Color = try {
 private fun rememberBase64Image(b64: String?): ImageBitmap? = remember(b64) {
     if (b64.isNullOrBlank()) null else try {
         val bytes = android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
-        android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+        // Downsample supaya thumbnail/gambar besar tidak membengkakkan memori (cegah OOM & lag).
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        val maxDim = 1600
+        var sample = 1
+        while ((bounds.outWidth / sample) > maxDim || (bounds.outHeight / sample) > maxDim) {
+            sample *= 2
+        }
+        val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+        android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)?.asImageBitmap()
     } catch (e: Exception) { null }
 }
 
@@ -298,10 +307,14 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
         }
 
         // 1. Swipeable preview pager (SELALU tampil di atas). Edit mode = editor Canva.
+        // PENTING: pager WAJIB punya tinggi terbatas (aspectRatio) karena berada di
+        // dalam LazyColumn (tinggi tak-hingga). Tanpa ini aplikasi crash saat dibuka.
         HorizontalPager(
             state = pagerState,
             pageSpacing = 12.dp,
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(aspectFloatOf(design.aspectRatio))
         ) { page ->
             val slide = slides.getOrNull(page)
             if (slide != null) {
@@ -309,8 +322,7 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
                 val bmp = rememberSlideBitmap(design, slide, page, total, editMode)
                 BoxWithConstraints(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(aspectFloatOf(design.aspectRatio))
+                        .fillMaxSize()
                         .clip(RoundedCornerShape(18.dp))
                         .border(2.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f), RoundedCornerShape(18.dp)),
                     contentAlignment = Alignment.Center
@@ -435,7 +447,7 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
                                                     }
                                                 }
                                             }
-                                            CarouselElement.SUBTEXT, CarouselElement.CTA -> {
+                                            CarouselElement.SUBTEXT -> {
                                                 val accent = hexColor(design.accentColorHex, Color(0xFF38BDF8))
                                                 Box(
                                                     modifier = Modifier
@@ -446,6 +458,23 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
                                                 ) {
                                                     Text(caseText(display, el.case), style = ts.copy(shadow = null))
                                                 }
+                                            }
+                                            CarouselElement.CTA -> {
+                                                // CTA polos: tanpa garis tepi & tanpa background hitam.
+                                                val highlight = el.effect == TextEffect.HIGHLIGHT
+                                                Text(
+                                                    caseText(display, el.case),
+                                                    style = ts,
+                                                    modifier = Modifier
+                                                        .widthIn(max = elWidthDp)
+                                                        .then(
+                                                            if (highlight) Modifier
+                                                                .clip(RoundedCornerShape(6.dp))
+                                                                .background(Color.Black.copy(alpha = 0.6f))
+                                                                .padding(horizontal = 6.dp, vertical = 3.dp)
+                                                            else Modifier
+                                                        )
+                                                )
                                             }
                                             else -> {
                                                 val highlight = el.effect == TextEffect.HIGHLIGHT
@@ -650,7 +679,7 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
                 onValueChange = { viewModel.setDesignAiPrompt(it) },
                 label = { Text("Prompt Background AI (opsional)") },
                 placeholder = { Text("Cth: gradasi biru tosca lembut, bokeh, minimalis", fontSize = 11.sp) },
-                supportingText = { Text("Sistem otomatis melarang teks/logo & konten tidak aman, maks 400 karakter.", fontSize = 9.sp) },
+                supportingText = { Text("Sistem otomatis melarang teks/logo & konten tidak aman, maks 400 karakter. Jika AI gagal, otomatis pakai gambar internet lalu galeri lokal.", fontSize = 9.sp) },
                 minLines = 2,
                 modifier = Modifier.fillMaxWidth()
             )
@@ -674,6 +703,7 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
                     Text("Hapus BG", fontSize = 10.sp)
                 }
             }
+            Text("AI pintar: bila generate gambar tidak tersedia, otomatis ambil dari internet lalu galeri lokal.", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (isGeneratingImg) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
@@ -736,7 +766,7 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
             // --- Cari gambar dari internet ---
             HorizontalDivider()
             Text("Cari Gambar dari Internet (seperti Google Images/Pinterest):", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-            Text("Ketik kata kunci (disarankan bahasa Inggris), pilih gambar, langsung jadi background.", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Ketik kata kunci (disarankan bahasa Inggris), pilih gambar, langsung jadi background & tersimpan ke galeri.", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(
                     value = imageQuery,
@@ -758,7 +788,7 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
                 }
             }
             if (imageResults.isNotEmpty()) {
-                Text("Ketuk = pasang di slide ini \u2022 tekan lama = semua slide", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Ketuk = pasang di slide ini \u2022 tekan lama = semua slide (otomatis tersimpan ke galeri)", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(imageResults) { img ->
                         val thumb = rememberBase64Image(img.thumbBase64)
@@ -899,6 +929,7 @@ fun CarouselStudioContent(viewModel: AutoPostViewModel) {
                 label = { Text("Teks CTA") },
                 modifier = Modifier.fillMaxWidth()
             )
+            Text("Tampil polos: tanpa background hitam & tanpa garis tepi (hanya teks/ikon).", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text("Ikon CTA:", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 items(CarouselPresets.ctaIcons) { icon ->
