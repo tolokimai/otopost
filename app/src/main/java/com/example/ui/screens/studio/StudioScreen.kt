@@ -33,6 +33,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 import com.example.data.local.entity.CarouselSlide
 import com.example.data.local.entity.SocialPlatform
 import com.example.ui.theme.*
@@ -244,25 +245,41 @@ fun StudioScreen(
 // ==========================================
 
 // ==========================================
-// 4b. PODCAST CLIP STUDIO COMPONENT
+// 4b. PODCAST CLIP STUDIO COMPONENT (pipeline nyata: cari -> pilih -> transkrip ->
+//     rekomendasi segmen AI -> unduh HD -> potong per-segmen -> simpan)
 // ==========================================
+private fun formatViewCount(v: Long): String {
+    return when {
+        v >= 1_000_000 -> String.format("%.1fJt", v / 1_000_000.0)
+        v >= 1_000 -> String.format("%.1frb", v / 1_000.0)
+        else -> v.toString()
+    }
+}
+
 @Composable
 fun PodcastClipStudioContent(viewModel: AutoPostViewModel) {
+    val candidates by viewModel.podcastCandidates.collectAsState()
+    val isSearching by viewModel.isSearchingPodcast.collectAsState()
+    val noRelevant by viewModel.noRelevantPodcast.collectAsState()
+    val selectedCandidate by viewModel.selectedCandidate.collectAsState()
     val videoInfo by viewModel.podcastVideoInfo.collectAsState()
     val highlights by viewModel.podcastHighlights.collectAsState()
     val selectedIndex by viewModel.selectedHighlightIndex.collectAsState()
     val isLoading by viewModel.isLoadingPodcast.collectAsState()
-    val isTranscribing by viewModel.isTranscribingPodcast.collectAsState()
+    val clipAspectRatio by viewModel.clipAspectRatio.collectAsState()
+    val downloadedPath by viewModel.downloadedVideoPath.collectAsState()
+    val isDownloading by viewModel.isDownloadingVideoFile.collectAsState()
+    val downloadProgress by viewModel.downloadProgress.collectAsState()
+    val savedClips by viewModel.savedClips.collectAsState()
+    val isCutting by viewModel.isCuttingClip.collectAsState()
     val fullTranscript by viewModel.podcastFullTranscript.collectAsState()
 
-    var inputUrlOrTopic by remember { mutableStateOf("https://youtube.com/watch?v=deddy_podcast") }
-    var cutStartSec by remember { mutableStateOf(30f) }
-    var cutEndSec by remember { mutableStateOf(85f) }
+    var themeInput by remember { mutableStateOf("") }
+    var manualUrl by remember { mutableStateOf("") }
     var showFullTranscriptDialog by remember { mutableStateOf(false) }
 
-    val activeHighlight = highlights.getOrNull(selectedIndex)
-
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        // 1) CARI VIDEO DARI TEMA / RENCANA
         Card(
             shape = RoundedCornerShape(14.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
@@ -271,308 +288,278 @@ fun PodcastClipStudioContent(viewModel: AutoPostViewModel) {
                 modifier = Modifier.fillMaxWidth().padding(14.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text("Sumber Podcast YouTube:", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text("1. Cari Video Podcast dari Tema", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    "Mesin mencari 2-3 video YouTube relevan (butuh YouTube API Key di Settings). Jika tidak ada yang relevan, ganti isi konten rencana ini.",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
 
                 OutlinedTextField(
-                    value = inputUrlOrTopic,
-                    onValueChange = { inputUrlOrTopic = it },
-                    label = { Text("Link YouTube Video / Kata Kunci Topik") },
-                    placeholder = { Text("mis. Deddy Corbuzier bisnis, Alex Hormozi") },
-                    trailingIcon = {
-                        IconButton(
-                            onClick = { viewModel.loadPodcastForTopic(inputUrlOrTopic) },
-                            enabled = inputUrlOrTopic.isNotBlank() && !isLoading && !isTranscribing
-                        ) {
-                            if (isLoading) {
-                                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                            } else {
-                                Icon(Icons.Default.Search, contentDescription = "Ambil")
-                            }
-                        }
-                    },
+                    value = themeInput,
+                    onValueChange = { themeInput = it },
+                    label = { Text("Tema / kata kunci konten") },
+                    placeholder = { Text("mis. mindset bisnis anak muda, produktivitas") },
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                Text("Pilihan Cepat Podcast Trending:", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    SuggestionChip(
-                        onClick = {
-                            inputUrlOrTopic = "Deddy Corbuzier Bisnis"
-                            viewModel.loadPodcastForTopic(inputUrlOrTopic)
-                        },
-                        label = { Text("Deddy Corbuzier", fontSize = 11.sp) }
-                    )
-                    SuggestionChip(
-                        onClick = {
-                            inputUrlOrTopic = "Alex Hormozi Business"
-                            viewModel.loadPodcastForTopic(inputUrlOrTopic)
-                        },
-                        label = { Text("Alex Hormozi", fontSize = 11.sp) }
-                    )
-                    SuggestionChip(
-                        onClick = {
-                            inputUrlOrTopic = "Creator Strategy 2026"
-                            viewModel.loadPodcastForTopic(inputUrlOrTopic)
-                        },
-                        label = { Text("Creator Masterclass", fontSize = 11.sp) }
-                    )
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Button(
-                        onClick = { viewModel.transcribeAndProcessPodcast(inputUrlOrTopic) },
-                        enabled = !isTranscribing && !isLoading,
-                        modifier = Modifier.weight(1.3f),
-                        shape = RoundedCornerShape(10.dp)
-                    ) {
-                        if (isTranscribing) {
-                            CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
-                            Spacer(Modifier.width(6.dp))
-                            Text("Transkripsi...", fontSize = 12.sp)
-                        } else {
-                            Icon(Icons.Default.GraphicEq, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Download & Transkrip Full", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                        }
-                    }
-
-                    if (fullTranscript.isNotBlank()) {
-                        OutlinedButton(
-                            onClick = { showFullTranscriptDialog = true },
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(10.dp)
-                        ) {
-                            Icon(Icons.Default.Subject, contentDescription = null, modifier = Modifier.size(14.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Naskah Full", fontSize = 11.sp)
-                        }
-                    }
-                }
-            }
-        }
-
-        Text("Preview 9:16 Shorts/Reels/TikTok Clip:", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(380.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .background(Brush.verticalGradient(listOf(Slate900, Slate800, Color(0xFF000000))))
-                .border(1.dp, Slate700, RoundedCornerShape(16.dp))
-                .padding(16.dp)
-        ) {
-            Column(
-                modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.SpaceBetween
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = Color.Black.copy(alpha = 0.6f)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Surface(shape = CircleShape, color = YouTubeRed, modifier = Modifier.size(18.dp)) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.White, modifier = Modifier.size(12.dp))
-                            }
-                        }
-                        Text(
-                            text = "${videoInfo?.channelName ?: "YouTube Podcast"} - ${activeHighlight?.durationFormatted ?: "00:${cutStartSec.toInt()} - 01:${(cutEndSec % 60).toInt()}"}",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
-                    }
-                }
-
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
-                ) {
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = YouTubeRed.copy(alpha = 0.9f)
-                    ) {
-                        Text(
-                            text = activeHighlight?.hook ?: "99% Orang Belum Tahu Formula Ini!",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = Color.White,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
-                        )
-                    }
-
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        val infiniteTransition = rememberInfiniteTransition(label = "wave")
-                        val barHeights = listOf(24.dp, 40.dp, 56.dp, 32.dp, 48.dp, 60.dp, 36.dp, 50.dp, 28.dp)
-                        barHeights.forEachIndexed { i, h ->
-                            val animH by infiniteTransition.animateValue(
-                                initialValue = h * 0.4f,
-                                targetValue = h,
-                                typeConverter = androidx.compose.ui.unit.Dp.VectorConverter,
-                                animationSpec = infiniteRepeatable(
-                                    animation = tween(durationMillis = 400 + (i * 100), easing = FastOutSlowInEasing),
-                                    repeatMode = RepeatMode.Reverse
-                                ),
-                                label = "bar_$i"
-                            )
-                            Box(
-                                modifier = Modifier
-                                    .width(6.dp)
-                                    .height(animH)
-                                    .clip(RoundedCornerShape(3.dp))
-                                    .background(UtilityBlue400)
-                            )
-                        }
-                    }
-                }
-
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = Color.Black.copy(alpha = 0.8f),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Text(
-                            text = "Auto-Subtitles Highlight:",
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = UtilityBlue400
-                        )
-                        Text(
-                            text = "\"${activeHighlight?.transcriptSnippet ?: "Transkrip kalimat emas pembicara..."}\"",
-                            fontSize = 12.sp,
-                            color = Color.White,
-                            maxLines = 3,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                }
-            }
-        }
-
-        Card(
-            shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-        ) {
-            Column(
-                modifier = Modifier.fillMaxWidth().padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("Pemotong Klip Video (Detik):", fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                    Text(
-                        "${cutStartSec.toInt()}s - ${cutEndSec.toInt()}s (${(cutEndSec - cutStartSec).toInt()} detik)",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Text("Mulai:", fontSize = 11.sp)
-                    Slider(
-                        value = cutStartSec,
-                        onValueChange = { if (it < cutEndSec - 5) cutStartSec = it },
-                        valueRange = 0f..180f,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Text("Selesai:", fontSize = 11.sp)
-                    Slider(
-                        value = cutEndSec,
-                        onValueChange = { if (it > cutStartSec + 5) cutEndSec = it },
-                        valueRange = 10f..300f,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-
                 Button(
-                    onClick = {
-                        val durationStr = String.format("%02d:%02d - %02d:%02d", (cutStartSec / 60).toInt(), (cutStartSec % 60).toInt(), (cutEndSec / 60).toInt(), (cutEndSec % 60).toInt())
-                        val hook = activeHighlight?.hook ?: "Cuplikan Penting Podcast Ini!"
-                        viewModel.setStudioMetadata(
-                            title = "${videoInfo?.channelName ?: "Podcast"} Klip: ${activeHighlight?.title ?: "Highlights"}",
-                            hook = hook,
-                            caption = "Wajib dengar potongan obrolan ini dari ${videoInfo?.channelName ?: "Podcast"}! #podcast #shorts #viral",
-                            hashtags = "#podcast #clips #shorts #reels #tiktok"
-                        )
-                    },
+                    onClick = { viewModel.searchPodcastCandidates(themeInput) },
+                    enabled = themeInput.isNotBlank() && !isSearching,
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(10.dp)
                 ) {
-                    Icon(Icons.Default.ContentCut, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Potong & Terapkan Klip ke Metadata Post", fontWeight = FontWeight.Bold)
+                    if (isSearching) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Mencari video relevan...", fontSize = 12.sp)
+                    } else {
+                        Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Cari 2-3 Video Relevan", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                HorizontalDivider()
+                Text("Atau tempel link YouTube manual:", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                OutlinedTextField(
+                    value = manualUrl,
+                    onValueChange = { manualUrl = it },
+                    label = { Text("Link YouTube / topik manual") },
+                    trailingIcon = {
+                        IconButton(
+                            onClick = { viewModel.loadPodcastForTopic(manualUrl) },
+                            enabled = manualUrl.isNotBlank() && !isLoading
+                        ) {
+                            if (isLoading) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                            else Icon(Icons.Default.Subject, contentDescription = "Ambil transkrip manual")
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+
+        if (noRelevant) {
+            Card(
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = StatusFailed.copy(alpha = 0.12f))
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(Icons.Default.Warning, contentDescription = null, tint = StatusFailed, modifier = Modifier.size(20.dp))
+                    Text(
+                        "Tidak ada video YouTube relevan untuk tema ini. Sebaiknya ganti isi konten rencana ini.",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
                 }
             }
         }
 
-        Text(
-            text = "Klip Potongan Viral Pilihan AI (${highlights.size} Segmen):",
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Bold
-        )
-
-        if (highlights.isEmpty()) {
-            if (isLoading || isTranscribing) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(16.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                    Spacer(Modifier.width(10.dp))
-                    Text("Sedang memproses transkrip & menganalisis klip viral...", fontSize = 13.sp)
+        // 2) DAFTAR KANDIDAT VIDEO (pilih otomatis/manual)
+        if (candidates.isNotEmpty()) {
+            Text("2. Pilih Video (mesin sudah memilih otomatis, bisa diganti manual):", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                candidates.forEach { c ->
+                    val sel = selectedCandidate?.videoId == c.videoId
+                    Card(
+                        modifier = Modifier.fillMaxWidth().clickable { viewModel.selectPodcastCandidate(c) },
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (sel) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f) else MaterialTheme.colorScheme.surface
+                        ),
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .width(116.dp)
+                                    .height(66.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Slate800)
+                            ) {
+                                if (c.thumbnailUrl.isNotBlank()) {
+                                    AsyncImage(
+                                        model = c.thumbnailUrl,
+                                        contentDescription = c.title,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                }
+                                Surface(
+                                    shape = RoundedCornerShape(4.dp),
+                                    color = Color.Black.copy(alpha = 0.7f),
+                                    modifier = Modifier.align(Alignment.BottomEnd).padding(4.dp)
+                                ) {
+                                    Text(
+                                        c.durationFormatted,
+                                        fontSize = 9.sp,
+                                        color = Color.White,
+                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                    )
+                                }
+                            }
+                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Text(c.title, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                Text(c.channelName, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text("${formatViewCount(c.viewCount)} views", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                if (sel) {
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Icon(Icons.Default.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
+                                        Text("Dipilih", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
-            } else {
-                Text(
-                    text = "Klik 'Ambil' di atas atau pilih preset podcast untuk memuat highlight.",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
             }
-        } else {
+        }
+
+        // 3) RASIO KLIP (bisa diset default)
+        if (selectedCandidate != null || videoInfo != null) {
+            Card(
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text("3. Rasio Hasil Potong", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = clipAspectRatio == "9:16",
+                            onClick = { viewModel.setClipAspectRatio("9:16") },
+                            label = { Text("9:16 Potrait") }
+                        )
+                        FilterChip(
+                            selected = clipAspectRatio == "16:9",
+                            onClick = { viewModel.setClipAspectRatio("16:9") },
+                            label = { Text("16:9 Landscape") }
+                        )
+                        TextButton(onClick = { viewModel.saveDefaultClipAspectRatio(clipAspectRatio) }) {
+                            Text("Jadikan default", fontSize = 11.sp)
+                        }
+                    }
+                    Text(
+                        "Catatan: versi ini memotong video apa adanya (kualitas asli). Reframe otomatis ke potrait & fokus wajah pembicara sedang disiapkan (butuh proses berat / jalur server).",
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            // 4) UNDUH VIDEO
+            Card(
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text("4. Unduh Video HD", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    if (isDownloading) {
+                        LinearProgressIndicator(
+                            progress = { if (downloadProgress > 0f) downloadProgress else 0.02f },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Text("Mengunduh... ${(downloadProgress * 100).toInt()}%", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else {
+                        Button(
+                            onClick = { viewModel.downloadSelectedVideo() },
+                            enabled = selectedCandidate != null,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(if (downloadedPath != null) "Unduh Ulang" else "Unduh Video (best-effort)", fontWeight = FontWeight.Bold)
+                        }
+                        if (downloadedPath != null) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Icon(Icons.Default.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
+                                Text("Video siap dipotong.", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
+                            }
+                        } else {
+                            Text(
+                                "Jika unduh otomatis gagal (YouTube berubah/blokir), nanti kita pakai jalur server (yt-dlp) yang lebih andal.",
+                                fontSize = 10.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        if (isLoading) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(8.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.width(10.dp))
+                Text("Mengambil transkrip & menganalisis segmen viral...", fontSize = 13.sp)
+            }
+        }
+
+        // 5) SEGMEN REKOMENDASI AI + POTONG
+        if (highlights.isNotEmpty()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("5. Segmen Rekomendasi AI (${highlights.size})", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                if (fullTranscript.isNotBlank()) {
+                    TextButton(onClick = { showFullTranscriptDialog = true }) {
+                        Icon(Icons.Default.Subject, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Naskah", fontSize = 11.sp)
+                    }
+                }
+            }
+
+            Button(
+                onClick = { viewModel.cutAllSegments() },
+                enabled = downloadedPath != null && !isCutting,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
+            ) {
+                if (isCutting) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Memotong...", fontSize = 12.sp)
+                } else {
+                    Icon(Icons.Default.ContentCut, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Potong Semua Segmen & Simpan", fontWeight = FontWeight.Bold)
+                }
+            }
+
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 highlights.forEachIndexed { index, hl ->
                     val isSelected = selectedIndex == index
                     Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                viewModel.selectPodcastHighlight(index)
-                                cutStartSec = hl.startSec.toFloat()
-                                cutEndSec = hl.endSec.toFloat()
-                            },
+                        modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
                         colors = CardDefaults.cardColors(
-                            containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f) else MaterialTheme.colorScheme.surface
+                            containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f) else MaterialTheme.colorScheme.surface
                         ),
                         border = androidx.compose.foundation.BorderStroke(
                             1.dp,
@@ -597,6 +584,60 @@ fun PodcastClipStudioContent(viewModel: AutoPostViewModel) {
                             }
                             Text(text = "Hook: ${hl.hook}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface)
                             Text(text = "Potensi Viral: ${hl.reasonWhyViral}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(
+                                    onClick = { viewModel.cutSegmentAt(index) },
+                                    enabled = downloadedPath != null && !isCutting,
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Icon(Icons.Default.ContentCut, contentDescription = null, modifier = Modifier.size(14.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Potong & Simpan", fontSize = 11.sp)
+                                }
+                                OutlinedButton(
+                                    onClick = {
+                                        viewModel.selectPodcastHighlight(index)
+                                        viewModel.setStudioMetadata(
+                                            title = "${videoInfo?.channelName ?: "Podcast"} Klip: ${hl.title}",
+                                            hook = hl.hook,
+                                            caption = "Wajib dengar potongan obrolan ini! #podcast #shorts #viral",
+                                            hashtags = "#podcast #clips #shorts #reels #tiktok"
+                                        )
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text("Pakai Metadata", fontSize = 11.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 6) KLIP TERSIMPAN
+        if (savedClips.isNotEmpty()) {
+            Text("Klip Tersimpan (${savedClips.size}) - folder Movies/AutoPostStudio:", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                savedClips.forEach { clip ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(Icons.Default.Movie, contentDescription = null, tint = UtilityBlue400, modifier = Modifier.size(20.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(clip.title, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text("${clip.startSec}s - ${clip.endSec}s  \u2022  ${clip.displayName}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                            Icon(Icons.Default.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
                         }
                     }
                 }
