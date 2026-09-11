@@ -104,7 +104,7 @@ class GeminiService(private val getApiKey: () -> String) {
             val prompt = "Reply with exactly: 'OK_READY'"
             val response = executePrompt(prompt, key)
             if (response.contains("OK", ignoreCase = true) || response.isNotBlank()) {
-                Pair(true, "Koneksi Gemini 3.5 Flash berhasil! Model siap digunakan.")
+                Pair(true, "Koneksi Gemini 2.5 Flash berhasil! Model siap digunakan.")
             } else {
                 Pair(false, "Respon tidak valid dari server.")
             }
@@ -249,7 +249,7 @@ class GeminiService(private val getApiKey: () -> String) {
                 ContentFormat.CAROUSEL -> Triple(
                     "5 Cara Cepat Menguasai ${persona.niche} di 2026",
                     "Stop lakukan ini kalau kamu masih pemula di ${persona.niche}!",
-                    "Slide 1-5 merangkum framework praktis yang terbukti bekerja. Geser sampai akhir & drop pertanyaanmu di komen! 👇"
+                    "Slide 1-5 merangkum framework praktis yang terbukti bekerja. Geser sampai akhir & drop pertanyaanmu di komen! \ud83d\udc47"
                 )
                 ContentFormat.PODCAST_CLIP -> Triple(
                     "Mindset Krusial untuk Sukses di ${persona.niche}",
@@ -297,7 +297,7 @@ class GeminiService(private val getApiKey: () -> String) {
                 "slideNumber": 1,
                 "headline": "Judul Menarik Slide 1 (Cover Hook)",
                 "body": "Deskripsi singkat yang memancing orang untuk slide ke kanan",
-                "subtext": "Swipe ➡️"
+                "subtext": "Swipe \u27a1\ufe0f"
               },
               ...
             ]
@@ -315,7 +315,7 @@ class GeminiService(private val getApiKey: () -> String) {
                         slideNumber = obj.optInt("slideNumber", i + 1),
                         headline = obj.optString("headline", "Slide ${i + 1}"),
                         body = obj.optString("body", "Penjelasan poin penting."),
-                        subtext = obj.optString("subtext", if (i == jsonArray.length() - 1) "Save & Share!" else "Geser ➡️")
+                        subtext = obj.optString("subtext", if (i == jsonArray.length() - 1) "Save & Share!" else "Geser \u27a1\ufe0f")
                     )
                 )
             }
@@ -326,11 +326,11 @@ class GeminiService(private val getApiKey: () -> String) {
 
         // Smart fallback slides
         listOf(
-            CarouselSlide(1, hook.ifBlank { topic }, "Banyak yang gagal paham soal ini. Ini breakdown lengkapnya!", "Swipe untuk lanjut ➡️"),
-            CarouselSlide(2, "01. Pahami Masalah Utama", "Langkah awal adalah mengidentifikasi titik krusial tanpa buang waktu.", "Poin 2 lebih penting ➡️"),
-            CarouselSlide(3, "02. Eksekusi dengan Strategi Tepat", "Fokus pada action 20% yang menghasilkan 80% dampak.", "Lanjut ke langkah 3 ➡️"),
-            CarouselSlide(4, "03. Evaluasi & Optimasi", "Cek data secara berkala dan perbaiki bagian yang kurang efektif.", "Hampir selesai ➡️"),
-            CarouselSlide(5, "Simpan & Praktikkan Sekarang!", "Komen 'MAU' kalau kamu pengen dapat template gratis dari kami!", "Save post ini 📌")
+            CarouselSlide(1, hook.ifBlank { topic }, "Banyak yang gagal paham soal ini. Ini breakdown lengkapnya!", "Swipe untuk lanjut \u27a1\ufe0f"),
+            CarouselSlide(2, "01. Pahami Masalah Utama", "Langkah awal adalah mengidentifikasi titik krusial tanpa buang waktu.", "Poin 2 lebih penting \u27a1\ufe0f"),
+            CarouselSlide(3, "02. Eksekusi dengan Strategi Tepat", "Fokus pada action 20% yang menghasilkan 80% dampak.", "Lanjut ke langkah 3 \u27a1\ufe0f"),
+            CarouselSlide(4, "03. Evaluasi & Optimasi", "Cek data secara berkala dan perbaiki bagian yang kurang efektif.", "Hampir selesai \u27a1\ufe0f"),
+            CarouselSlide(5, "Simpan & Praktikkan Sekarang!", "Komen 'MAU' kalau kamu pengen dapat template gratis dari kami!", "Save post ini \ud83d\udccc")
         )
     }
 
@@ -453,8 +453,8 @@ class GeminiService(private val getApiKey: () -> String) {
             )
         } catch (e: Exception) {
             VideoCopyResult(
-                viralHook = "Jangan Skip Kalau Kamu Mau Tahu Rahasianya! 🔥",
-                caption = "Ini dia cara paling simpel dan efektif yang bisa kamu coba langsung hari ini. Like & Share ke temanmu ya! ✨",
+                viralHook = "Jangan Skip Kalau Kamu Mau Tahu Rahasianya! \ud83d\udd25",
+                caption = "Ini dia cara paling simpel dan efektif yang bisa kamu coba langsung hari ini. Like & Share ke temanmu ya! \u2728",
                 hashtags = "#reelsvideo #tiktoktips #contentcreator #viralindo #shorts",
                 subtitles = listOf(
                     "Rahasia utama yang jarang dibahas kreator...",
@@ -539,9 +539,9 @@ class GeminiService(private val getApiKey: () -> String) {
                 Log.w("GeminiService", "Imagen 3 API call fallback", e)
             }
 
-            // Attempt 2: gemini-3.1-flash-image-preview
+            // Attempt 2: gemini-3.1-flash-image
             try {
-                val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image-preview:generateContent?key=$apiKey"
+                val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image:generateContent?key=$apiKey"
                 val requestBodyJson = JSONObject().apply {
                     val contentsArray = JSONArray().apply {
                         val contentObj = JSONObject().apply {
@@ -626,14 +626,14 @@ class GeminiService(private val getApiKey: () -> String) {
         )
     }
 
-    // --- 2. AUDIO TRANSCRIPTION (gemini-3.5-transcribe) ---
+    // --- 2. AUDIO TRANSCRIPTION (gemini-2.5-flash multimodal) ---
     suspend fun transcribeAudioWithGemini(
         rawTranscriptOrTopic: String,
         videoTitle: String
     ): TranscriptionResult = withContext(Dispatchers.IO) {
         val apiKey = getApiKey()
         val prompt = """
-            Kamu adalah AI Speech-to-Text Transcriptionist menggunakan model gemini-3.5-transcribe.
+            Kamu adalah AI Speech-to-Text Transcriptionist.
             Transkripsikan audio video/podcast berikut dengan teliti beserta timestamp per detik/kalimat.
             Judul Video: "$videoTitle"
             Konten Audio/Topik: "$rawTranscriptOrTopic"
@@ -655,7 +655,7 @@ class GeminiService(private val getApiKey: () -> String) {
 
         if (apiKey.isNotBlank() && apiKey != "MY_GEMINI_API_KEY") {
             try {
-                val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-transcribe:generateContent?key=$apiKey"
+                val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$apiKey"
                 val requestBodyJson = JSONObject().apply {
                     val contentsArray = JSONArray().apply {
                         val contentObj = JSONObject().apply {
@@ -814,7 +814,7 @@ class GeminiService(private val getApiKey: () -> String) {
             aspectRatio = aspectRatio,
             durationSec = durationSec,
             stylePreset = stylePreset,
-            videoUrl = "https://veo.aistudio.preview/gen_${System.currentTimeMillis()}",
+            videoUrl = null, // Veo perlu polling long-running operation utk URL video nyata (belum diimplementasikan)
             storyboardFrames = listOf(
                 "FRAME 1: Opening hook frame with dynamic movement",
                 "FRAME 2: Main focal subject high definition transition",
@@ -843,7 +843,7 @@ class GeminiService(private val getApiKey: () -> String) {
 
     private suspend fun executePrompt(prompt: String, explicitKey: String? = null): String = withContext(Dispatchers.IO) {
         val apiKey = explicitKey ?: getApiKey()
-        val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=$apiKey"
+        val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$apiKey"
 
         val requestBodyJson = JSONObject().apply {
             val contentsArray = JSONArray().apply {
