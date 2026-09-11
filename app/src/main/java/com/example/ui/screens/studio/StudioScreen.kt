@@ -92,22 +92,22 @@ fun StudioScreen(
                     Tab(
                         selected = subMode == StudioSubMode.CAROUSEL,
                         onClick = { viewModel.setStudioSubMode(StudioSubMode.CAROUSEL) },
-                        text = { Text("📑 Carousel", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+                        text = { Text("Carousel", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
                     )
                     Tab(
                         selected = subMode == StudioSubMode.PODCAST_CLIP,
                         onClick = { viewModel.setStudioSubMode(StudioSubMode.PODCAST_CLIP) },
-                        text = { Text("🎙️ Podcast Clip", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+                        text = { Text("Podcast Clip", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
                     )
                     Tab(
                         selected = subMode == StudioSubMode.SELF_VIDEO,
                         onClick = { viewModel.setStudioSubMode(StudioSubMode.SELF_VIDEO) },
-                        text = { Text("🎬 Video Sendiri", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+                        text = { Text("Video Sendiri", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
                     )
                     Tab(
                         selected = subMode == StudioSubMode.AI_VIDEO,
                         onClick = { viewModel.setStudioSubMode(StudioSubMode.AI_VIDEO) },
-                        text = { Text("✨ Buat Video", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+                        text = { Text("Buat Video", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
                     )
                 }
             }
@@ -240,731 +240,9 @@ fun StudioScreen(
 }
 
 // ==========================================
-// 4a. CAROUSEL STUDIO COMPONENT
+// 4a. CAROUSEL STUDIO COMPONENT dipindah ke CarouselStudio.kt (package sama)
 // ==========================================
-// ==========================================
-// 4a. CAROUSEL STUDIO COMPONENT
-// ==========================================
-@Composable
-fun CarouselStudioContent(viewModel: AutoPostViewModel) {
-    val slides by viewModel.carouselSlides.collectAsState()
-    val bgPreset by viewModel.carouselBackgroundPreset.collectAsState()
-    val carouselTheme by viewModel.carouselTheme.collectAsState()
-    val aspectRatio by viewModel.carouselAspectRatio.collectAsState()
-    val typographyStyle by viewModel.carouselTypographyStyle.collectAsState()
-    val watermark by viewModel.carouselWatermark.collectAsState()
-    val fontChoice by viewModel.carouselFontFamily.collectAsState()
-    val isGeneratingAi by viewModel.isGeneratingCarouselAi.collectAsState()
-    val isGeneratingImg by viewModel.isGeneratingSlideImage.collectAsState()
-    val title by viewModel.studioContentTitle.collectAsState()
-    val hook by viewModel.studioContentHook.collectAsState()
 
-    var activeSlideIndex by remember { mutableStateOf(0) }
-    val currentSlide = slides.getOrNull(activeSlideIndex) ?: slides.firstOrNull()
-
-    // Decode base64 image if present
-    val slideBitmap = remember(currentSlide?.imageBase64) {
-        currentSlide?.imageBase64?.let { b64 ->
-            try {
-                val bytes = Base64.decode(b64, Base64.DEFAULT)
-                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
-            } catch (e: Exception) {
-                null
-            }
-        }
-    }
-
-    val aspectFloat = when (aspectRatio) {
-        "4:5" -> 4f / 5f
-        "3:4" -> 3f / 4f
-        "9:16" -> 9f / 16f
-        else -> 1f
-    }
-
-    val activeFontFamily = when (fontChoice) {
-        "Serif" -> FontFamily.Serif
-        "Monospace" -> FontFamily.Monospace
-        else -> FontFamily.SansSerif
-    }
-
-    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        // --- Live Carousel Visual Preview Header ---
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column {
-                Text("Pratinjau Slide Fullscreen:", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                Text("Rasio $aspectRatio • Gaya $typographyStyle", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = UtilityBlue400.copy(alpha = 0.15f)
-            ) {
-                Text(
-                    text = "Tema: $carouselTheme",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = UtilityBlue400,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                )
-            }
-        }
-
-        // --- Fullscreen Background Card with Live Dynamic Typography Overlay ---
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(aspectFloat)
-                .clip(RoundedCornerShape(18.dp))
-                .border(2.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f), RoundedCornerShape(18.dp)),
-            contentAlignment = Alignment.Center
-        ) {
-            // 1. Pure Fullscreen Background (Image or Fallback Gradient)
-            if (slideBitmap != null) {
-                Image(
-                    bitmap = slideBitmap,
-                    contentDescription = "Background Slide",
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
-                )
-            } else {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            when (bgPreset) {
-                                "DARK_CYAN" -> Brush.verticalGradient(listOf(Color(0xFF042F2E), Color(0xFF115E59), Color(0xFF0E7490)))
-                                "WARM_SUNSET" -> Brush.verticalGradient(listOf(Color(0xFF4C0519), Color(0xFF831843), Color(0xFF9D174D)))
-                                "SOLID_DARK" -> Brush.verticalGradient(listOf(Color(0xFF18181B), Color(0xFF27272A)))
-                                else -> Brush.verticalGradient(listOf(Color(0xFF0F172A), Color(0xFF1E1B4B), Color(0xFF312E81)))
-                            }
-                        )
-                )
-            }
-
-            // 2. Readability Scrim / Backdrop Overlay based on style
-            when (typographyStyle) {
-                "Bottom Scrim" -> {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(
-                                Brush.verticalGradient(
-                                    listOf(Color.Black.copy(alpha = 0.15f), Color.Black.copy(alpha = 0.5f), Color.Black.copy(alpha = 0.9f)),
-                                    startY = 0f,
-                                    endY = Float.POSITIVE_INFINITY
-                                )
-                            )
-                    )
-                }
-                "Glassmorphism Card" -> {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(Color.Black.copy(alpha = 0.25f))
-                    )
-                }
-                "Cyber Neon" -> {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(
-                                Brush.verticalGradient(
-                                    listOf(Color(0xFF080216).copy(alpha = 0.4f), Color(0xFF080216).copy(alpha = 0.75f))
-                                )
-                            )
-                    )
-                }
-                else -> {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(
-                                Brush.verticalGradient(
-                                    listOf(Color.Black.copy(alpha = 0.35f), Color.Black.copy(alpha = 0.65f))
-                                )
-                            )
-                    )
-                }
-            }
-
-            // 3. Dynamic Typography Content Overlay
-            SlideTypographyLayout(
-                slideNumber = activeSlideIndex + 1,
-                totalSlides = slides.size,
-                headline = currentSlide?.headline ?: "Judul Slide",
-                body = currentSlide?.body ?: "Deskripsi teks slide...",
-                subtext = currentSlide?.subtext ?: "Geser ➡️",
-                watermark = watermark,
-                style = typographyStyle,
-                fontFamily = activeFontFamily,
-                aspectRatio = aspectRatio
-            )
-        }
-
-        // --- Slide Navigation Selector ---
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            LazyRow(
-                modifier = Modifier.weight(1f),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                itemsIndexed(slides) { idx, s ->
-                    FilterChip(
-                        selected = activeSlideIndex == idx,
-                        onClick = { activeSlideIndex = idx },
-                        label = {
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Text("Slide ${idx + 1}")
-                                if (s.imageBase64 != null) {
-                                    Icon(Icons.Default.Image, contentDescription = null, modifier = Modifier.size(12.dp), tint = UtilityBlue400)
-                                }
-                            }
-                        }
-                    )
-                }
-            }
-
-            IconButton(onClick = { viewModel.addCarouselSlide() }) {
-                Icon(Icons.Default.AddCircle, contentDescription = "Tambah Slide", tint = MaterialTheme.colorScheme.primary)
-            }
-
-            if (slides.size > 1) {
-                IconButton(onClick = {
-                    viewModel.removeCarouselSlide(activeSlideIndex)
-                    if (activeSlideIndex >= slides.size - 1) {
-                        activeSlideIndex = (slides.size - 2).coerceAtLeast(0)
-                    }
-                }) {
-                    Icon(Icons.Default.DeleteOutline, contentDescription = "Hapus Slide", tint = StatusFailed)
-                }
-            }
-        }
-
-        // --- 1. ASPECT RATIO SELECTOR ---
-        Card(
-            shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-        ) {
-            Column(
-                modifier = Modifier.fillMaxWidth().padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text("📐 Pilihan Ukuran & Aspek Rasio:", fontSize = 13.sp, fontWeight = FontWeight.Bold)
-
-                val ratioOptions = listOf(
-                    "1:1" to "1:1 (Square IG)",
-                    "4:5" to "4:5 (Portrait IG)",
-                    "3:4" to "3:4 (Feed Post)",
-                    "9:16" to "9:16 (Story/Reels)"
-                )
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(ratioOptions) { (ratioKey, ratioLabel) ->
-                        FilterChip(
-                            selected = aspectRatio == ratioKey,
-                            onClick = { viewModel.setCarouselAspectRatio(ratioKey) },
-                            label = { Text(ratioLabel, fontSize = 11.sp, fontWeight = if (aspectRatio == ratioKey) FontWeight.Bold else FontWeight.Normal) }
-                        )
-                    }
-                }
-            }
-        }
-
-        // --- 2. TYPOGRAPHY STYLE SELECTOR ---
-        Card(
-            shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-        ) {
-            Column(
-                modifier = Modifier.fillMaxWidth().padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text("✨ Pilihan Gaya & Model Tipografi:", fontSize = 13.sp, fontWeight = FontWeight.Bold)
-
-                val typographyStyles = listOf(
-                    "Modern Minimalist",
-                    "Glassmorphism Card",
-                    "Bold Hero",
-                    "Editorial Serif",
-                    "Bottom Scrim",
-                    "Cyber Neon"
-                )
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    items(typographyStyles) { styleName ->
-                        FilterChip(
-                            selected = typographyStyle == styleName,
-                            onClick = { viewModel.setCarouselTypographyStyle(styleName) },
-                            label = { Text(styleName, fontSize = 11.sp, fontWeight = if (typographyStyle == styleName) FontWeight.Bold else FontWeight.Normal) }
-                        )
-                    }
-                }
-            }
-        }
-
-        // --- 3. THEME & IMAGE GENERATION SECTION ---
-        Card(
-            shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-        ) {
-            Column(
-                modifier = Modifier.fillMaxWidth().padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text("🎨 Tema Visual Background (Tanpa Teks):", fontSize = 13.sp, fontWeight = FontWeight.Bold)
-
-                val themes = listOf("Minimalist Tech", "Cyber Neon", "Aesthetic Pastel", "Dark Luxury", "Vintage Retro", "3D Illustration")
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    items(themes) { t ->
-                        FilterChip(
-                            selected = carouselTheme == t,
-                            onClick = { viewModel.setCarouselTheme(t) },
-                            label = { Text(t, fontSize = 11.sp) }
-                        )
-                    }
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    OutlinedButton(
-                        onClick = { viewModel.generateImageForSingleSlide(activeSlideIndex) },
-                        enabled = !isGeneratingImg,
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(10.dp)
-                    ) {
-                        if (isGeneratingImg) {
-                            CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
-                            Spacer(Modifier.width(6.dp))
-                            Text("Memproses...", fontSize = 11.sp)
-                        } else {
-                            Icon(Icons.Default.Image, contentDescription = null, modifier = Modifier.size(14.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Background Slide Ini", fontSize = 11.sp)
-                        }
-                    }
-
-                    Button(
-                        onClick = { viewModel.generateImagesForAllSlides() },
-                        enabled = !isGeneratingImg,
-                        modifier = Modifier.weight(1.2f),
-                        shape = RoundedCornerShape(10.dp)
-                    ) {
-                        Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(14.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("Generate Semua Background", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                    }
-                }
-            }
-        }
-
-        // --- AI Generator Button for Carousel Text Content ---
-        Button(
-            onClick = { viewModel.generateCarouselSlidesFromCurrent(title, hook, 5) },
-            enabled = !isGeneratingAi,
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(10.dp)
-        ) {
-            if (isGeneratingAi) {
-                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
-                Spacer(Modifier.width(8.dp))
-                Text("Gemini Sedang Menyusun Teks Slide...")
-            } else {
-                Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("Generate Ulang Teks 5 Slide dengan AI")
-            }
-        }
-
-        // --- Slide Editor Fields ---
-        if (currentSlide != null) {
-            Card(
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-            ) {
-                Column(
-                    modifier = Modifier.fillMaxWidth().padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text("Edit Teks Slide ${activeSlideIndex + 1}:", fontSize = 13.sp, fontWeight = FontWeight.Bold)
-
-                    OutlinedTextField(
-                        value = currentSlide.headline,
-                        onValueChange = { viewModel.updateCarouselSlide(activeSlideIndex, it, currentSlide.body, currentSlide.subtext) },
-                        label = { Text("Headline Slide") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    OutlinedTextField(
-                        value = currentSlide.body,
-                        onValueChange = { viewModel.updateCarouselSlide(activeSlideIndex, currentSlide.headline, it, currentSlide.subtext) },
-                        label = { Text("Isi / Poin Penjelasan") },
-                        minLines = 2,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    OutlinedTextField(
-                        value = currentSlide.subtext,
-                        onValueChange = { viewModel.updateCarouselSlide(activeSlideIndex, currentSlide.headline, currentSlide.body, it) },
-                        label = { Text("Subtext / CTA (mis. Geser ➡️)") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            }
-        }
-
-        // --- Visual & Font Customization Toolbar ---
-        Card(
-            shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-        ) {
-            Column(
-                modifier = Modifier.fillMaxWidth().padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text("Pengaturan Teks & Akun:", fontSize = 13.sp, fontWeight = FontWeight.Bold)
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    OutlinedTextField(
-                        value = watermark,
-                        onValueChange = { viewModel.setCarouselWatermark(it) },
-                        label = { Text("Nama Akun / Watermark") },
-                        modifier = Modifier.weight(1f)
-                    )
-
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("Jenis Font:", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            FilterChip(selected = fontChoice == "Sans", onClick = { viewModel.setCarouselFontFamily("Sans") }, label = { Text("Sans", fontSize = 10.sp) })
-                            FilterChip(selected = fontChoice == "Serif", onClick = { viewModel.setCarouselFontFamily("Serif") }, label = { Text("Serif", fontSize = 10.sp) })
-                            FilterChip(selected = fontChoice == "Monospace", onClick = { viewModel.setCarouselFontFamily("Monospace") }, label = { Text("Mono", fontSize = 10.sp) })
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-// ==========================================
-// DYNAMIC TYPOGRAPHY LAYOUT COMPONENT
-// ==========================================
-@Composable
-fun SlideTypographyLayout(
-    slideNumber: Int,
-    totalSlides: Int,
-    headline: String,
-    body: String,
-    subtext: String,
-    watermark: String,
-    style: String,
-    fontFamily: FontFamily,
-    aspectRatio: String
-) {
-    val paddingHorizontal = if (aspectRatio == "9:16") 20.dp else 16.dp
-    val paddingVertical = if (aspectRatio == "9:16") 28.dp else 16.dp
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = paddingHorizontal, vertical = paddingVertical),
-        verticalArrangement = Arrangement.SpaceBetween
-    ) {
-        // --- 1. HEADER (Slide Number Badge & Watermark) ---
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            when (style) {
-                "Cyber Neon" -> {
-                    Surface(
-                        shape = RoundedCornerShape(4.dp),
-                        color = Color(0xFF00F0FF).copy(alpha = 0.2f),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00F0FF))
-                    ) {
-                        Text(
-                            text = "SLIDE 0$slideNumber / 0$totalSlides",
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace,
-                            color = Color(0xFF00F0FF),
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                        )
-                    }
-                    Text(
-                        text = watermark.uppercase(),
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace,
-                        color = Color(0xFFFF007F)
-                    )
-                }
-                "Editorial Serif" -> {
-                    Text(
-                        text = "$slideNumber / $totalSlides",
-                        fontSize = 13.sp,
-                        fontFamily = FontFamily.Serif,
-                        fontWeight = FontWeight.Light,
-                        color = Color.White.copy(alpha = 0.85f)
-                    )
-                    Text(
-                        text = watermark,
-                        fontSize = 12.sp,
-                        fontFamily = FontFamily.Serif,
-                        fontWeight = FontWeight.Medium,
-                        color = Color.White.copy(alpha = 0.9f)
-                    )
-                }
-                else -> {
-                    Surface(
-                        shape = RoundedCornerShape(20.dp),
-                        color = Color.White.copy(alpha = 0.22f)
-                    ) {
-                        Text(
-                            text = "$slideNumber / $totalSlides",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                        )
-                    }
-                    Text(
-                        text = watermark,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color.White.copy(alpha = 0.85f)
-                    )
-                }
-            }
-        }
-
-        // --- 2. BODY CONTENT (Based on Typography Style) ---
-        when (style) {
-            "Glassmorphism Card" -> {
-                Surface(
-                    shape = RoundedCornerShape(20.dp),
-                    color = Color.Black.copy(alpha = 0.45f),
-                    border = androidx.compose.foundation.BorderStroke(1.5.dp, Color.White.copy(alpha = 0.35f)),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(
-                        modifier = Modifier.padding(18.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Text(
-                            text = headline,
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = Color.White,
-                            textAlign = TextAlign.Center,
-                            fontFamily = fontFamily,
-                            lineHeight = 24.sp
-                        )
-                        HorizontalDivider(
-                            color = Color.White.copy(alpha = 0.25f),
-                            thickness = 1.dp,
-                            modifier = Modifier.width(60.dp)
-                        )
-                        Text(
-                            text = body,
-                            fontSize = 13.sp,
-                            color = Color.White.copy(alpha = 0.95f),
-                            textAlign = TextAlign.Center,
-                            fontFamily = fontFamily,
-                            lineHeight = 19.sp
-                        )
-                    }
-                }
-            }
-
-            "Bold Hero" -> {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.9f)
-                    ) {
-                        Text(
-                            text = headline,
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Black,
-                            color = Color.White,
-                            fontFamily = fontFamily,
-                            lineHeight = 26.sp,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
-                        )
-                    }
-                    Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = Color.Black.copy(alpha = 0.55f),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            text = body,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = Color.White,
-                            lineHeight = 20.sp,
-                            fontFamily = fontFamily,
-                            modifier = Modifier.padding(12.dp)
-                        )
-                    }
-                }
-            }
-
-            "Editorial Serif" -> {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalAlignment = Alignment.Start,
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        text = "“",
-                        fontSize = 36.sp,
-                        fontWeight = FontWeight.Light,
-                        color = UtilityBlue400,
-                        fontFamily = FontFamily.Serif,
-                        lineHeight = 20.sp
-                    )
-                    Text(
-                        text = headline,
-                        fontSize = 19.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White,
-                        fontFamily = FontFamily.Serif,
-                        lineHeight = 25.sp
-                    )
-                    HorizontalDivider(
-                        color = UtilityBlue400.copy(alpha = 0.6f),
-                        thickness = 1.5.dp,
-                        modifier = Modifier.width(40.dp)
-                    )
-                    Text(
-                        text = body,
-                        fontSize = 13.sp,
-                        color = Color.White.copy(alpha = 0.92f),
-                        fontFamily = FontFamily.Serif,
-                        lineHeight = 19.sp
-                    )
-                }
-            }
-
-            "Cyber Neon" -> {
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = Color.Black.copy(alpha = 0.6f),
-                    border = androidx.compose.foundation.BorderStroke(1.5.dp, Color(0xFF00F0FF).copy(alpha = 0.7f)),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(
-                        modifier = Modifier.padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text(
-                            text = "► $headline",
-                            fontSize = 17.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = Color(0xFF00F0FF),
-                            fontFamily = FontFamily.Monospace,
-                            lineHeight = 23.sp
-                        )
-                        Text(
-                            text = body,
-                            fontSize = 13.sp,
-                            color = Color.White,
-                            fontFamily = FontFamily.Monospace,
-                            lineHeight = 18.sp
-                        )
-                    }
-                }
-            }
-
-            "Bottom Scrim" -> {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        text = headline,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = Color.White,
-                        fontFamily = fontFamily,
-                        lineHeight = 24.sp
-                    )
-                    Text(
-                        text = body,
-                        fontSize = 13.sp,
-                        color = Color.White.copy(alpha = 0.92f),
-                        fontFamily = fontFamily,
-                        lineHeight = 18.sp
-                    )
-                }
-            }
-
-            else -> { // Modern Minimalist
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Text(
-                        text = headline,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = Color.White,
-                        textAlign = TextAlign.Center,
-                        fontFamily = fontFamily,
-                        lineHeight = 24.sp
-                    )
-                    Text(
-                        text = body,
-                        fontSize = 13.sp,
-                        color = Color.White.copy(alpha = 0.92f),
-                        textAlign = TextAlign.Center,
-                        fontFamily = fontFamily,
-                        lineHeight = 18.sp
-                    )
-                }
-            }
-        }
-
-        // --- 3. BOTTOM CTA / SUBTEXT ---
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.End,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = Color.Black.copy(alpha = 0.4f),
-                border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))
-            ) {
-                Text(
-                    text = subtext,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White.copy(alpha = 0.9f),
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                )
-            }
-        }
-    }
-}
-
-// ==========================================
 // ==========================================
 // 4b. PODCAST CLIP STUDIO COMPONENT
 // ==========================================
@@ -985,7 +263,6 @@ fun PodcastClipStudioContent(viewModel: AutoPostViewModel) {
     val activeHighlight = highlights.getOrNull(selectedIndex)
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        // --- YouTube URL / Topic Input Bar ---
         Card(
             shape = RoundedCornerShape(14.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
@@ -1016,7 +293,6 @@ fun PodcastClipStudioContent(viewModel: AutoPostViewModel) {
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                // Quick Picks presets
                 Text("Pilihan Cepat Podcast Trending:", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     SuggestionChip(
@@ -1042,7 +318,6 @@ fun PodcastClipStudioContent(viewModel: AutoPostViewModel) {
                     )
                 }
 
-                // Action: Download Audio & Full Transcribe via gemini-3.5-transcribe
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1056,7 +331,7 @@ fun PodcastClipStudioContent(viewModel: AutoPostViewModel) {
                         if (isTranscribing) {
                             CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
                             Spacer(Modifier.width(6.dp))
-                            Text("Transkripsi (gemini-3.5)...", fontSize = 12.sp)
+                            Text("Transkripsi...", fontSize = 12.sp)
                         } else {
                             Icon(Icons.Default.GraphicEq, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
@@ -1079,7 +354,6 @@ fun PodcastClipStudioContent(viewModel: AutoPostViewModel) {
             }
         }
 
-        // --- 9:16 Vertical Video Frame Simulator ---
         Text("Preview 9:16 Shorts/Reels/TikTok Clip:", fontSize = 14.sp, fontWeight = FontWeight.Bold)
 
         Box(
@@ -1095,7 +369,6 @@ fun PodcastClipStudioContent(viewModel: AutoPostViewModel) {
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.SpaceBetween
             ) {
-                // Top Attribution Banner (Channel & Title)
                 Surface(
                     shape = RoundedCornerShape(10.dp),
                     color = Color.Black.copy(alpha = 0.6f)
@@ -1111,7 +384,7 @@ fun PodcastClipStudioContent(viewModel: AutoPostViewModel) {
                             }
                         }
                         Text(
-                            text = "${videoInfo?.channelName ?: "YouTube Podcast"} • ${activeHighlight?.durationFormatted ?: "00:${cutStartSec.toInt()} - 01:${(cutEndSec % 60).toInt()}"}",
+                            text = "${videoInfo?.channelName ?: "YouTube Podcast"} - ${activeHighlight?.durationFormatted ?: "00:${cutStartSec.toInt()} - 01:${(cutEndSec % 60).toInt()}"}",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color.White
@@ -1119,19 +392,17 @@ fun PodcastClipStudioContent(viewModel: AutoPostViewModel) {
                     }
                 }
 
-                // Center: Animated Audio Waveform & Viral Hook Overlay
                 Column(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    // Hook Banner
                     Surface(
                         shape = RoundedCornerShape(12.dp),
                         color = YouTubeRed.copy(alpha = 0.9f)
                     ) {
                         Text(
-                            text = activeHighlight?.hook ?: "🔥 99% Orang Belum Tahu Formula Ini!",
+                            text = activeHighlight?.hook ?: "99% Orang Belum Tahu Formula Ini!",
                             fontSize = 14.sp,
                             fontWeight = FontWeight.ExtraBold,
                             color = Color.White,
@@ -1140,7 +411,6 @@ fun PodcastClipStudioContent(viewModel: AutoPostViewModel) {
                         )
                     }
 
-                    // Simulated Live Waveform
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                         verticalAlignment = Alignment.CenterVertically
@@ -1169,7 +439,6 @@ fun PodcastClipStudioContent(viewModel: AutoPostViewModel) {
                     }
                 }
 
-                // Bottom: Auto-Subtitles Banner
                 Surface(
                     shape = RoundedCornerShape(10.dp),
                     color = Color.Black.copy(alpha = 0.8f),
@@ -1177,7 +446,7 @@ fun PodcastClipStudioContent(viewModel: AutoPostViewModel) {
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
                         Text(
-                            text = "💬 Auto-Subtitles Highlight:",
+                            text = "Auto-Subtitles Highlight:",
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
                             color = UtilityBlue400
@@ -1194,7 +463,6 @@ fun PodcastClipStudioContent(viewModel: AutoPostViewModel) {
             }
         }
 
-        // --- Video Clip Cutting & Slider Tool ---
         Card(
             shape = RoundedCornerShape(12.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
@@ -1208,7 +476,7 @@ fun PodcastClipStudioContent(viewModel: AutoPostViewModel) {
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("✂️ Pemotong Klip Video (Detik):", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    Text("Pemotong Klip Video (Detik):", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                     Text(
                         "${cutStartSec.toInt()}s - ${cutEndSec.toInt()}s (${(cutEndSec - cutStartSec).toInt()} detik)",
                         fontSize = 12.sp,
@@ -1266,7 +534,6 @@ fun PodcastClipStudioContent(viewModel: AutoPostViewModel) {
             }
         }
 
-        // --- Gemini AI Identified Highlights List ---
         Text(
             text = "Klip Potongan Viral Pilihan AI (${highlights.size} Segmen):",
             fontSize = 14.sp,
@@ -1328,8 +595,8 @@ fun PodcastClipStudioContent(viewModel: AutoPostViewModel) {
                                 }
                                 Text(text = hl.durationFormatted, fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
                             }
-                            Text(text = "🔥 Hook: ${hl.hook}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface)
-                            Text(text = "💡 Potensi Viral: ${hl.reasonWhyViral}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(text = "Hook: ${hl.hook}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface)
+                            Text(text = "Potensi Viral: ${hl.reasonWhyViral}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
@@ -1344,7 +611,7 @@ fun PodcastClipStudioContent(viewModel: AutoPostViewModel) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.Subject, contentDescription = null, tint = UtilityBlue400)
                     Spacer(Modifier.width(8.dp))
-                    Text("Naskah Transkripsi Full (gemini-3.5)", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    Text("Naskah Transkripsi Full", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                 }
             },
             text = {
@@ -1383,7 +650,6 @@ fun AiVideoStudioContent(viewModel: AutoPostViewModel) {
     val title by viewModel.studioContentTitle.collectAsState()
 
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        // --- Live AI Video Simulation Canvas ---
         Text("Preview Video AI Generator (Veo 3.1):", fontSize = 14.sp, fontWeight = FontWeight.Bold)
 
         val isVertical = aspectRatio == "9:16"
@@ -1410,7 +676,6 @@ fun AiVideoStudioContent(viewModel: AutoPostViewModel) {
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.SpaceBetween
             ) {
-                // Top Badges
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -1435,7 +700,7 @@ fun AiVideoStudioContent(viewModel: AutoPostViewModel) {
                         color = Color.Black.copy(alpha = 0.6f)
                     ) {
                         Text(
-                            text = "$aspectRatio • ${durationSeconds}s",
+                            text = "$aspectRatio - ${durationSeconds}s",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = Color.White,
@@ -1444,7 +709,6 @@ fun AiVideoStudioContent(viewModel: AutoPostViewModel) {
                     }
                 }
 
-                // Center Content: Play Button or Animation Visualizer
                 Column(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -1493,7 +757,6 @@ fun AiVideoStudioContent(viewModel: AutoPostViewModel) {
                     }
                 }
 
-                // Bottom: Prompt Preview Summary & Watermark
                 Surface(
                     shape = RoundedCornerShape(10.dp),
                     color = Color.Black.copy(alpha = 0.7f),
@@ -1511,7 +774,6 @@ fun AiVideoStudioContent(viewModel: AutoPostViewModel) {
             }
         }
 
-        // --- Prompt Input Box ---
         Card(
             shape = RoundedCornerShape(14.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
@@ -1531,7 +793,6 @@ fun AiVideoStudioContent(viewModel: AutoPostViewModel) {
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                // Quick Prompt Inspiration Chips
                 Text("Inspirasi Prompt Cepat:", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     SuggestionChip(
@@ -1550,7 +811,6 @@ fun AiVideoStudioContent(viewModel: AutoPostViewModel) {
             }
         }
 
-        // --- Video Configuration Toolbar (Aspect Ratio, Style, Duration) ---
         Card(
             shape = RoundedCornerShape(14.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
@@ -1561,7 +821,6 @@ fun AiVideoStudioContent(viewModel: AutoPostViewModel) {
             ) {
                 Text("Pengaturan Rasio & Style Video:", fontSize = 13.sp, fontWeight = FontWeight.Bold)
 
-                // Aspect Ratio Selector
                 Text("Rasio Format:", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(
@@ -1576,7 +835,6 @@ fun AiVideoStudioContent(viewModel: AutoPostViewModel) {
                     )
                 }
 
-                // Style Preset Selector
                 Text("Gaya Sinematik / Visual Preset:", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 val styles = listOf("Cinematic 4K", "Cyberpunk / Neon", "Photorealistic Studio", "3D Animation / CGI", "Minimal Aesthetic")
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1589,7 +847,6 @@ fun AiVideoStudioContent(viewModel: AutoPostViewModel) {
                     }
                 }
 
-                // Duration Selector
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -1604,7 +861,6 @@ fun AiVideoStudioContent(viewModel: AutoPostViewModel) {
             }
         }
 
-        // --- Action Buttons: Generate Video & Apply to Post ---
         Button(
             onClick = { viewModel.generateAiVideoFromText() },
             enabled = !isGenerating && prompt.isNotBlank(),
@@ -1650,7 +906,6 @@ fun SelfVideoStudioContent(viewModel: AutoPostViewModel) {
     var showAddSubtitleDialog by remember { mutableStateOf(false) }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        // --- 9:16 Video Canvas Preview Box ---
         Text("Preview Video & Subtitle Overlay:", fontSize = 14.sp, fontWeight = FontWeight.Bold)
 
         Box(
@@ -1666,14 +921,13 @@ fun SelfVideoStudioContent(viewModel: AutoPostViewModel) {
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.SpaceBetween
             ) {
-                // Top Bold Hook Banner
                 Surface(
                     shape = RoundedCornerShape(10.dp),
                     color = Color.Yellow,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
-                        text = hookText.ifBlank { "HOOK 3 DETIK VIDEO DI SINI 🔥" },
+                        text = hookText.ifBlank { "HOOK 3 DETIK VIDEO DI SINI" },
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Black,
                         color = Color.Black,
@@ -1682,7 +936,6 @@ fun SelfVideoStudioContent(viewModel: AutoPostViewModel) {
                     )
                 }
 
-                // Center Icon Video Camera
                 Column(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -1704,7 +957,6 @@ fun SelfVideoStudioContent(viewModel: AutoPostViewModel) {
                     )
                 }
 
-                // Bottom Subtitles Box
                 Surface(
                     shape = RoundedCornerShape(10.dp),
                     color = Color.Black.copy(alpha = 0.75f),
@@ -1712,7 +964,7 @@ fun SelfVideoStudioContent(viewModel: AutoPostViewModel) {
                 ) {
                     Column(modifier = Modifier.padding(10.dp)) {
                         Text(
-                            text = "💬 Subtitle Dinamis:",
+                            text = "Subtitle Dinamis:",
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
                             color = UtilityBlue400
@@ -1729,7 +981,6 @@ fun SelfVideoStudioContent(viewModel: AutoPostViewModel) {
             }
         }
 
-        // --- AI Generator Button for Video Copy ---
         Button(
             onClick = { viewModel.generateVideoScript(title) },
             enabled = !isGeneratingCopy,
@@ -1747,7 +998,6 @@ fun SelfVideoStudioContent(viewModel: AutoPostViewModel) {
             }
         }
 
-        // --- Hook Banner Text Editor ---
         Card(
             shape = RoundedCornerShape(12.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
@@ -1767,7 +1017,6 @@ fun SelfVideoStudioContent(viewModel: AutoPostViewModel) {
             }
         }
 
-        // --- Subtitles Editor ---
         Card(
             shape = RoundedCornerShape(12.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
@@ -1872,7 +1121,7 @@ fun SchedulePostDialog(
 
     var postHour by remember { mutableStateOf(defaultHour) }
     var postMinute by remember { mutableStateOf(defaultMinute) }
-    var daysAhead by remember { mutableStateOf(0) } // 0 = Hari ini, 1 = Besok, 2 = Lusa
+    var daysAhead by remember { mutableStateOf(0) }
 
     AlertDialog(
         onDismissRequest = onDismiss,

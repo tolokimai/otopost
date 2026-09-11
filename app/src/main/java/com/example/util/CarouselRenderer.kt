@@ -1,0 +1,272 @@
+package com.example.util
+
+import android.content.ContentValues
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.LinearGradient
+import android.graphics.Paint
+import android.graphics.RectF
+import android.graphics.Shader
+import android.graphics.Typeface
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
+import android.text.Layout
+import android.text.StaticLayout
+import android.text.TextPaint
+import android.util.Base64
+import com.example.data.local.entity.CarouselDesign
+import com.example.data.local.entity.CarouselElement
+import com.example.data.local.entity.CarouselPresets
+import com.example.data.local.entity.CarouselSlide
+import com.example.data.local.entity.ElementLayout
+import com.example.data.local.entity.SlideRole
+import com.example.data.local.entity.TextAlignH
+import java.io.File
+import java.io.FileOutputStream
+
+/**
+ * Merender satu slide carousel menjadi Bitmap final. Dipakai untuk preview DAN
+ * untuk hasil download, sehingga preview == file yang tersimpan (WYSIWYG).
+ */
+object CarouselRenderer {
+
+    fun render(
+        context: Context,
+        design: CarouselDesign,
+        slide: CarouselSlide,
+        role: SlideRole,
+        slideNumber: Int,
+        totalSlides: Int
+    ): Bitmap {
+        val spec = CarouselPresets.ratioSpec(design.aspectRatio)
+        val w = spec.width
+        val h = spec.height
+        val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+
+        drawBackground(canvas, w, h, design, slide, slideNumber)
+        drawScrim(canvas, w, h, design)
+
+        val baseSizePx = w * 0.052f * design.baseFontScale
+
+        for (el in design.layoutFor(role)) {
+            if (!el.visible) continue
+            when (el.element) {
+                CarouselElement.HEADLINE -> drawTextBox(canvas, w, h, slide.headline, el, design, baseSizePx)
+                CarouselElement.BODY -> drawTextBox(canvas, w, h, slide.body, el, design, baseSizePx)
+                CarouselElement.SUBTEXT -> if (slide.subtext.isNotBlank()) drawPill(canvas, w, h, slide.subtext, el, design, baseSizePx)
+                CarouselElement.CTA -> {
+                    val txt = (design.ctaText + (if (design.ctaIcon.isNotBlank()) " " + design.ctaIcon else "")).trim()
+                    if (txt.isNotBlank()) drawPill(canvas, w, h, txt, el, design, baseSizePx)
+                }
+                CarouselElement.WATERMARK -> if (design.watermarkText.isNotBlank()) drawTextBox(canvas, w, h, design.watermarkText, el, design, baseSizePx)
+                CarouselElement.PAGE_NUMBER -> if (design.showPageNumber) drawTextBox(canvas, w, h, String.format("%02d / %02d", slideNumber, totalSlides), el, design, baseSizePx)
+                CarouselElement.LOGO -> drawLogo(canvas, w, h, el, design)
+            }
+        }
+        return bitmap
+    }
+
+    fun renderAll(context: Context, design: CarouselDesign, slides: List<CarouselSlide>): List<Bitmap> {
+        val total = slides.size
+        return slides.mapIndexed { index, slide ->
+            render(context, design, slide, CarouselPresets.roleForSlide(index, total), index + 1, total)
+        }
+    }
+
+    private fun drawBackground(canvas: Canvas, w: Int, h: Int, design: CarouselDesign, slide: CarouselSlide, slideNumber: Int) {
+        val b64 = slide.imageBase64
+        if (!b64.isNullOrBlank()) {
+            try {
+                val bytes = Base64.decode(b64, Base64.DEFAULT)
+                val src = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                if (src != null) { drawBitmapCenterCrop(canvas, src, w, h); return }
+            } catch (e: Exception) { /* fall through */ }
+        }
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        when (design.backgroundTheme) {
+            "Solid Dark" -> { paint.color = Color.rgb(17, 17, 20); canvas.drawRect(0f, 0f, w.toFloat(), h.toFloat(), paint); return }
+            "Solid Light" -> { paint.color = Color.rgb(245, 245, 247); canvas.drawRect(0f, 0f, w.toFloat(), h.toFloat(), paint); return }
+            "Gradient Indigo" -> { drawVerticalGradient(canvas, w, h, intArrayOf(Color.rgb(15, 23, 42), Color.rgb(30, 27, 75), Color.rgb(49, 46, 129))); return }
+            "Gradient Sunset" -> { drawVerticalGradient(canvas, w, h, intArrayOf(Color.rgb(76, 5, 25), Color.rgb(131, 24, 67), Color.rgb(157, 23, 77))); return }
+        }
+        try {
+            val genB64 = SlideGraphicGenerator.generateThemedGraphicBase64(
+                headline = slide.headline,
+                body = slide.body,
+                theme = design.backgroundTheme,
+                slideNumber = slideNumber,
+                aspectRatio = design.aspectRatio
+            )
+            val bytes = Base64.decode(genB64, Base64.DEFAULT)
+            val src = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            if (src != null) { drawBitmapCenterCrop(canvas, src, w, h); return }
+        } catch (e: Exception) { /* fall through */ }
+        drawVerticalGradient(canvas, w, h, intArrayOf(Color.rgb(15, 23, 42), Color.rgb(30, 41, 59), Color.rgb(15, 23, 42)))
+    }
+
+    private fun drawVerticalGradient(canvas: Canvas, w: Int, h: Int, colors: IntArray) {
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        paint.shader = LinearGradient(0f, 0f, 0f, h.toFloat(), colors, null, Shader.TileMode.CLAMP)
+        canvas.drawRect(0f, 0f, w.toFloat(), h.toFloat(), paint)
+        paint.shader = null
+    }
+
+    private fun drawBitmapCenterCrop(canvas: Canvas, src: Bitmap, w: Int, h: Int) {
+        val scale = maxOf(w.toFloat() / src.width, h.toFloat() / src.height)
+        val dw = src.width * scale
+        val dh = src.height * scale
+        val left = (w - dw) / 2f
+        val top = (h - dh) / 2f
+        canvas.drawBitmap(src, null, RectF(left, top, left + dw, top + dh), Paint(Paint.FILTER_BITMAP_FLAG))
+    }
+
+    private fun drawScrim(canvas: Canvas, w: Int, h: Int, design: CarouselDesign) {
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        when (design.typographyStyle) {
+            "Bottom Scrim" -> paint.shader = LinearGradient(0f, 0f, 0f, h.toFloat(), intArrayOf(Color.argb(38, 0, 0, 0), Color.argb(128, 0, 0, 0), Color.argb(230, 0, 0, 0)), floatArrayOf(0f, 0.55f, 1f), Shader.TileMode.CLAMP)
+            "Glassmorphism Card", "Center Stage" -> paint.color = Color.argb(70, 0, 0, 0)
+            "Cyber Neon" -> paint.shader = LinearGradient(0f, 0f, 0f, h.toFloat(), intArrayOf(Color.argb(110, 8, 2, 22), Color.argb(190, 8, 2, 22)), null, Shader.TileMode.CLAMP)
+            "Solid Light", "Magazine" -> paint.color = Color.argb(0, 0, 0, 0)
+            else -> paint.shader = LinearGradient(0f, 0f, 0f, h.toFloat(), intArrayOf(Color.argb(90, 0, 0, 0), Color.argb(160, 0, 0, 0)), null, Shader.TileMode.CLAMP)
+        }
+        canvas.drawRect(0f, 0f, w.toFloat(), h.toFloat(), paint)
+        paint.shader = null
+    }
+
+    private fun typefaceFor(family: String, bold: Boolean, italic: Boolean): Typeface {
+        val base = when (family) {
+            "Serif" -> Typeface.SERIF
+            "Monospace" -> Typeface.MONOSPACE
+            "Rounded" -> Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            "Condensed" -> Typeface.create("sans-serif-condensed", Typeface.NORMAL)
+            else -> Typeface.SANS_SERIF
+        }
+        val style = when {
+            bold && italic -> Typeface.BOLD_ITALIC
+            bold -> Typeface.BOLD
+            italic -> Typeface.ITALIC
+            else -> Typeface.NORMAL
+        }
+        return Typeface.create(base, style)
+    }
+
+    private fun parseColor(hex: String?): Int = try {
+        if (hex.isNullOrBlank()) Color.WHITE else Color.parseColor(hex)
+    } catch (e: Exception) { Color.WHITE }
+
+    private fun buildTextPaint(design: CarouselDesign, el: ElementLayout, sizePx: Float): TextPaint {
+        val tp = TextPaint(Paint.ANTI_ALIAS_FLAG)
+        tp.typeface = typefaceFor(design.fontFamily, el.bold, el.italic)
+        tp.textSize = sizePx
+        tp.color = parseColor(el.colorHex ?: design.textColorHex)
+        tp.isUnderlineText = el.underline
+        tp.setShadowLayer(sizePx * 0.12f, 0f, sizePx * 0.04f, Color.argb(150, 0, 0, 0))
+        return tp
+    }
+
+    private fun alignOf(a: TextAlignH): Layout.Alignment = when (a) {
+        TextAlignH.START -> Layout.Alignment.ALIGN_NORMAL
+        TextAlignH.END -> Layout.Alignment.ALIGN_OPPOSITE
+        else -> Layout.Alignment.ALIGN_CENTER
+    }
+
+    private fun drawTextBox(canvas: Canvas, w: Int, h: Int, text: String, el: ElementLayout, design: CarouselDesign, baseSizePx: Float) {
+        if (text.isBlank()) return
+        val tp = buildTextPaint(design, el, baseSizePx * el.fontScale)
+        val boxWidth = (el.widthFraction * w).toInt().coerceIn(20, w)
+        val sl = StaticLayout.Builder.obtain(text, 0, text.length, tp, boxWidth)
+            .setAlignment(alignOf(el.align))
+            .setLineSpacing(0f, 1.06f)
+            .setIncludePad(false)
+            .build()
+        val left = el.xFraction * w - boxWidth / 2f
+        val top = el.yFraction * h - sl.height / 2f
+        canvas.save()
+        canvas.translate(left, top)
+        sl.draw(canvas)
+        canvas.restore()
+    }
+
+    private fun drawPill(canvas: Canvas, w: Int, h: Int, text: String, el: ElementLayout, design: CarouselDesign, baseSizePx: Float) {
+        if (text.isBlank()) return
+        val size = baseSizePx * el.fontScale
+        val tp = buildTextPaint(design, el, size)
+        tp.clearShadowLayer()
+        val maxW = el.widthFraction * w
+        val textW = minOf(tp.measureText(text), maxW - size)
+        val padH = size * 0.7f
+        val padV = size * 0.42f
+        val pillW = textW + padH * 2
+        val fm = tp.fontMetrics
+        val pillH = (fm.descent - fm.ascent) + padV * 2
+        val cx = el.xFraction * w
+        val cy = el.yFraction * h
+        val rect = RectF(cx - pillW / 2f, cy - pillH / 2f, cx + pillW / 2f, cy + pillH / 2f)
+        val bg = Paint(Paint.ANTI_ALIAS_FLAG)
+        bg.color = Color.argb(150, 0, 0, 0)
+        canvas.drawRoundRect(rect, pillH / 2f, pillH / 2f, bg)
+        val border = Paint(Paint.ANTI_ALIAS_FLAG)
+        border.style = Paint.Style.STROKE
+        border.strokeWidth = size * 0.06f
+        border.color = parseColor(design.accentColorHex)
+        canvas.drawRoundRect(rect, pillH / 2f, pillH / 2f, border)
+        tp.textAlign = Paint.Align.CENTER
+        canvas.drawText(text, cx, cy - (fm.ascent + fm.descent) / 2f, tp)
+    }
+
+    private fun drawLogo(canvas: Canvas, w: Int, h: Int, el: ElementLayout, design: CarouselDesign) {
+        val b64 = design.logoBase64 ?: return
+        try {
+            val bytes = Base64.decode(b64, Base64.DEFAULT)
+            val src = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return
+            val dw = el.widthFraction * w
+            val dh = dw * (src.height.toFloat() / src.width.toFloat())
+            val cx = el.xFraction * w
+            val cy = el.yFraction * h
+            canvas.drawBitmap(src, null, RectF(cx - dw / 2f, cy - dh / 2f, cx + dw / 2f, cy + dh / 2f), Paint(Paint.FILTER_BITMAP_FLAG))
+        } catch (e: Exception) { /* ignore */ }
+    }
+}
+
+/** Menyimpan slide-slide carousel ke penyimpanan lokal (galeri) sebagai PNG. */
+object CarouselExporter {
+    fun saveBitmaps(context: Context, bitmaps: List<Bitmap>, baseName: String): List<String> {
+        val saved = mutableListOf<String>()
+        val safeBase = baseName.replace(Regex("[^A-Za-z0-9_-]"), "_").take(40).ifBlank { "carousel" }
+        val stamp = System.currentTimeMillis()
+        bitmaps.forEachIndexed { index, bmp ->
+            val name = safeBase + "_" + stamp + "_slide" + (index + 1) + ".png"
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    val resolver = context.contentResolver
+                    val values = ContentValues().apply {
+                        put(MediaStore.Images.Media.DISPLAY_NAME, name)
+                        put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+                        put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/AutoPostStudio")
+                        put(MediaStore.Images.Media.IS_PENDING, 1)
+                    }
+                    val uri: Uri? = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                    if (uri != null) {
+                        resolver.openOutputStream(uri)?.use { os -> bmp.compress(Bitmap.CompressFormat.PNG, 100, os) }
+                        val done = ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }
+                        resolver.update(uri, done, null, null)
+                        saved.add(uri.toString())
+                    }
+                } else {
+                    val dir = File(context.getExternalFilesDir(Environment.DIRECTORY_PICTURES), "AutoPostStudio")
+                    if (!dir.exists()) dir.mkdirs()
+                    val file = File(dir, name)
+                    FileOutputStream(file).use { os -> bmp.compress(Bitmap.CompressFormat.PNG, 100, os) }
+                    saved.add(file.absolutePath)
+                }
+            } catch (e: Exception) { /* lewati slide ini */ }
+        }
+        return saved
+    }
+}

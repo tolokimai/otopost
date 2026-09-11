@@ -3,6 +3,7 @@ package com.example.data.preferences
 import android.content.Context
 import android.content.SharedPreferences
 import com.example.BuildConfig
+import com.example.data.local.entity.CarouselDesign
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -25,7 +26,8 @@ data class AppSettings(
     val postingFrequency: String = "DAILY", // DAILY, WEEKDAYS
     val themeMode: String = "DARK", // DARK, LIGHT, SYSTEM
     val appLanguage: String = "ID", // ID, EN
-    val autoRetryOnError: Boolean = true
+    val autoRetryOnError: Boolean = true,
+    val carouselDesignJson: String = "" // Desain carousel favorit/default (JSON)
 )
 
 class SettingsManager(context: Context) {
@@ -62,7 +64,8 @@ class SettingsManager(context: Context) {
             postingFrequency = prefs.getString("posting_frequency", "DAILY") ?: "DAILY",
             themeMode = prefs.getString("theme_mode", "DARK") ?: "DARK",
             appLanguage = prefs.getString("app_language", "ID") ?: "ID",
-            autoRetryOnError = prefs.getBoolean("auto_retry", true)
+            autoRetryOnError = prefs.getBoolean("auto_retry", true),
+            carouselDesignJson = prefs.getString("carousel_design_json", "") ?: ""
         )
     }
 
@@ -86,6 +89,7 @@ class SettingsManager(context: Context) {
             putString("theme_mode", newSettings.themeMode)
             putString("app_language", newSettings.appLanguage)
             putBoolean("auto_retry", newSettings.autoRetryOnError)
+            putString("carousel_design_json", newSettings.carouselDesignJson)
             apply()
         }
         _settings.value = newSettings
@@ -99,5 +103,14 @@ class SettingsManager(context: Context) {
         } catch (e: Exception) {
             ""
         }
+    }
+
+    /** Memuat desain carousel favorit/default yang tersimpan (atau default bawaan). */
+    fun loadFavoriteCarouselDesign(): CarouselDesign =
+        CarouselDesign.fromJsonString(_settings.value.carouselDesignJson)
+
+    /** Menyimpan desain carousel sebagai favorit/default untuk dipakai konten berikutnya. */
+    fun saveFavoriteCarouselDesign(design: CarouselDesign) {
+        updateSettings(_settings.value.copy(carouselDesignJson = design.toJsonString()))
     }
 }

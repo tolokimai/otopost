@@ -1,6 +1,8 @@
 package com.example.viewmodel
 
 import android.app.Application
+import android.net.Uri
+import android.util.Base64
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.AutoPostApplication
@@ -11,8 +13,12 @@ import com.example.data.remote.GeneratedPlanItem
 import com.example.data.remote.PodcastSegmentHighlight
 import com.example.data.remote.VideoCopyResult
 import com.example.data.remote.YouTubeVideoInfo
+import com.example.util.CarouselExporter
+import com.example.util.CarouselRenderer
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.Calendar
 
 sealed class MainTab(val route: String, val titleId: String, val iconName: String) {
@@ -349,6 +355,13 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
     private val _carouselFontFamily = MutableStateFlow("Sans") // Sans, Serif, Monospace
     val carouselFontFamily = _carouselFontFamily.asStateFlow()
 
+    // --- NEW: Full Carousel Design Model (WYSIWYG, manual + otomatis) ---
+    private val _carouselDesign = MutableStateFlow(settingsManager.loadFavoriteCarouselDesign())
+    val carouselDesign = _carouselDesign.asStateFlow()
+
+    private val _isExportingCarousel = MutableStateFlow(false)
+    val isExportingCarousel = _isExportingCarousel.asStateFlow()
+
     private val _isGeneratingCarouselAi = MutableStateFlow(false)
     val isGeneratingCarouselAi = _isGeneratingCarouselAi.asStateFlow()
 
@@ -469,6 +482,198 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    // ============================================================
+    // NEW CAROUSEL DESIGN ENGINE (manual + otomatis AI, WYSIWYG)
+    // ============================================================
+    private fun updateDesign(block: (CarouselDesign) -> CarouselDesign) {
+        _carouselDesign.value = block(_carouselDesign.value)
+    }
+
+    fun setDesignAspectRatio(key: String) = updateDesign { it.copy(aspectRatio = key) }
+    fun setDesignTypography(style: String) = updateDesign { it.copy(typographyStyle = style) }
+    fun setDesignBackgroundTheme(theme: String) = updateDesign { it.copy(backgroundTheme = theme) }
+    fun setDesignFontFamily(family: String) = updateDesign { it.copy(fontFamily = family) }
+    fun setDesignCtaText(text: String) = updateDesign { it.copy(ctaText = text) }
+    fun setDesignCtaIcon(icon: String) = updateDesign { it.copy(ctaIcon = icon) }
+    fun setDesignWatermark(text: String) = updateDesign { it.copy(watermarkText = text) }
+    fun setDesignTextColor(hex: String) = updateDesign { it.copy(textColorHex = hex) }
+    fun setDesignAccentColor(hex: String) = updateDesign { it.copy(accentColorHex = hex) }
+    fun toggleDesignPageNumber() = updateDesign { it.copy(showPageNumber = !it.showPageNumber) }
+    fun adjustDesignBaseFontScale(delta: Float) = updateDesign { it.copy(baseFontScale = (it.baseFontScale + delta).coerceIn(0.6f, 2.0f)) }
+
+    fun setWatermarkFromPersona() {
+        val p = defaultPersona.value
+        if (p != null) {
+            updateDesign { it.copy(watermarkText = "@" + p.brandName.trim().replace(" ", "").lowercase()) }
+            showMessage("Watermark diambil dari persona '${p.brandName}'.")
+        } else {
+            showMessage("Belum ada persona default untuk diambil.")
+        }
+    }
+
+    private fun mutateElement(role: SlideRole, element: CarouselElement, transform: (ElementLayout) -> ElementLayout) {
+        updateDesign { d ->
+            val el = d.elementIn(role, element) ?: return@updateDesign d
+            d.withElement(role, transform(el))
+        }
+    }
+
+    fun setElementPosition(role: SlideRole, element: CarouselElement, x: Float, y: Float) =
+        mutateElement(role, element) { it.copy(xFraction = x.coerceIn(0f, 1f), yFraction = y.coerceIn(0f, 1f)) }
+
+    fun toggleElementBold(role: SlideRole, element: CarouselElement) = mutateElement(role, element) { it.copy(bold = !it.bold) }
+    fun toggleElementItalic(role: SlideRole, element: CarouselElement) = mutateElement(role, element) { it.copy(italic = !it.italic) }
+    fun toggleElementUnderline(role: SlideRole, element: CarouselElement) = mutateElement(role, element) { it.copy(underline = !it.underline) }
+    fun toggleElementVisible(role: SlideRole, element: CarouselElement) = mutateElement(role, element) { it.copy(visible = !it.visible) }
+    fun adjustElementScale(role: SlideRole, element: CarouselElement, delta: Float) = mutateElement(role, element) { it.copy(fontScale = (it.fontScale + delta).coerceIn(0.4f, 3.0f)) }
+    fun setElementAlign(role: SlideRole, element: CarouselElement, align: TextAlignH) = mutateElement(role, element) { it.copy(align = align) }
+
+    fun resetRoleLayout(role: SlideRole) {
+        updateDesign { d ->
+            val m = d.layouts.toMutableMap()
+            m[role] = CarouselPresets.defaultLayoutFor(role)
+            d.copy(layouts = m)
+        }
+        showMessage("Posisi elemen untuk peran ${role.name} direset.")
+    }
+
+    fun saveDesignAsFavorite() {
+        settingsManager.saveFavoriteCarouselDesign(_carouselDesign.value)
+        showMessage("Desain ditetapkan sebagai default/favorit. Konten baru otomatis pakai gaya & posisi ini.")
+    }
+
+    fun moveSlide(from: Int, to: Int) {
+        val list = _carouselSlides.value.toMutableList()
+        if (from in list.indices && to in list.indices && from != to) {
+            val item = list.removeAt(from)
+            list.add(to, item)
+            _carouselSlides.value = list.mapIndexed { i, s -> s.copy(slideNumber = i + 1) }
+        }
+    }
+
+    fun setLogoFromUri(uri: Uri) {
+        viewModelScope.launch {
+            val b64 = uriToBase64(uri)
+            if (b64 != null) {
+                updateDesign { it.copy(logoBase64 = b64) }
+                showMessage("Logo dipasang.")
+            } else showMessage("Gagal membaca file logo.")
+        }
+    }
+
+    fun clearLogo() {
+        updateDesign { it.copy(logoBase64 = null) }
+        showMessage("Logo dihapus.")
+    }
+
+    fun setSlideBackgroundFromUri(index: Int, uri: Uri) {
+        viewModelScope.launch {
+            val b64 = uriToBase64(uri)
+            if (b64 != null) {
+                val list = _carouselSlides.value.toMutableList()
+                if (index in list.indices) {
+                    list[index] = list[index].copy(imageBase64 = b64)
+                    _carouselSlides.value = list
+                    showMessage("Background dari file dipasang di Slide ${index + 1}.")
+                }
+            } else showMessage("Gagal membaca gambar.")
+        }
+    }
+
+    fun clearSlideBackground(index: Int) {
+        val list = _carouselSlides.value.toMutableList()
+        if (index in list.indices) {
+            list[index] = list[index].copy(imageBase64 = null)
+            _carouselSlides.value = list
+            showMessage("Background Slide ${index + 1} dikosongkan (pakai tema).")
+        }
+    }
+
+    private suspend fun uriToBase64(uri: Uri): String? = withContext(Dispatchers.IO) {
+        try {
+            val ctx = getApplication<Application>().applicationContext
+            ctx.contentResolver.openInputStream(uri)?.use { input ->
+                Base64.encodeToString(input.readBytes(), Base64.NO_WRAP)
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    fun generateBackgroundForSlide(index: Int) {
+        viewModelScope.launch {
+            val list = _carouselSlides.value.toMutableList()
+            if (index in list.indices) {
+                _isGeneratingSlideImage.value = true
+                val theme = _carouselDesign.value.backgroundTheme
+                val ratio = _carouselDesign.value.aspectRatio
+                val s = list[index]
+                val res = repository.geminiService.generateSlideImage(s.headline, s.body, theme, s.slideNumber, ratio)
+                list[index] = s.copy(imageBase64 = res.base64Data, imagePrompt = res.promptUsed, themeName = theme)
+                _carouselSlides.value = list
+                _isGeneratingSlideImage.value = false
+                showMessage(if (res.isAiGenerated) "✨ Background AI dibuat utk Slide ${index + 1}!" else "🎨 Background '$theme' dipasang di Slide ${index + 1}!")
+            }
+        }
+    }
+
+    fun generateBackgroundsAllSlides() {
+        viewModelScope.launch {
+            _isGeneratingSlideImage.value = true
+            val theme = _carouselDesign.value.backgroundTheme
+            val ratio = _carouselDesign.value.aspectRatio
+            val list = _carouselSlides.value.toMutableList()
+            var ai = 0
+            for (i in list.indices) {
+                val s = list[i]
+                val res = repository.geminiService.generateSlideImage(s.headline, s.body, theme, s.slideNumber, ratio)
+                if (res.isAiGenerated) ai++
+                list[i] = s.copy(imageBase64 = res.base64Data, imagePrompt = res.promptUsed, themeName = theme)
+            }
+            _carouselSlides.value = list
+            _isGeneratingSlideImage.value = false
+            showMessage(if (ai > 0) "✨ $ai background AI berhasil dibuat!" else "🎨 Semua background '$theme' dipasang!")
+        }
+    }
+
+    fun autoDesignCarouselWithAi() {
+        viewModelScope.launch {
+            val niche = (defaultPersona.value?.niche ?: "").lowercase()
+            val picked = when {
+                niche.contains("tech") || niche.contains("bisnis") || niche.contains("produktivitas") || niche.contains("startup") ->
+                    Triple("Minimalist Tech", "Bold Hero", "Sans")
+                niche.contains("beauty") || niche.contains("fashion") || niche.contains("lifestyle") || niche.contains("wellness") ->
+                    Triple("Aesthetic Pastel", "Editorial Serif", "Serif")
+                niche.contains("gaming") || niche.contains("crypto") || niche.contains("ai") || niche.contains("web3") ->
+                    Triple("Cyber Neon", "Cyber Neon", "Monospace")
+                niche.contains("luxury") || niche.contains("finance") || niche.contains("keuangan") || niche.contains("invest") ->
+                    Triple("Dark Luxury", "Magazine", "Serif")
+                else -> Triple("Gradient Indigo", "Center Stage", "Sans")
+            }
+            updateDesign { it.copy(backgroundTheme = picked.first, typographyStyle = picked.second, fontFamily = picked.third) }
+            showMessage("🤖 Auto desain: ${picked.first} • ${picked.second}. Membuat background...")
+            generateBackgroundsAllSlides()
+        }
+    }
+
+    fun exportCarousel() {
+        viewModelScope.launch {
+            _isExportingCarousel.value = true
+            showMessage("Menyimpan semua slide ke penyimpanan lokal...")
+            val ctx = getApplication<Application>().applicationContext
+            val design = _carouselDesign.value
+            val slides = _carouselSlides.value
+            val titleForName = _studioContentTitle.value
+            val saved = withContext(Dispatchers.Default) {
+                val bmps = CarouselRenderer.renderAll(ctx, design, slides)
+                CarouselExporter.saveBitmaps(ctx, bmps, titleForName)
+            }
+            _isExportingCarousel.value = false
+            if (saved.isEmpty()) showMessage("Gagal menyimpan gambar.")
+            else showMessage("✅ ${saved.size} slide tersimpan di galeri (folder Pictures/AutoPostStudio).")
+        }
+    }
+
     // 4b. PODCAST CLIP STUDIO STATE
     private val _podcastVideoInfo = MutableStateFlow<YouTubeVideoInfo?>(null)
     val podcastVideoInfo = _podcastVideoInfo.asStateFlow()
@@ -516,7 +721,7 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
             _podcastVideoInfo.value = info
             _podcastFullTranscript.value = info.transcriptText
 
-            // Transcribe with gemini-3.5-transcribe
+            // Transcribe with gemini-2.5-flash
             val transcription = repository.geminiService.transcribeAudioWithGemini(info.transcriptText, info.title)
             _podcastTranscriptionResult.value = transcription
             _podcastFullTranscript.value = transcription.fullText
@@ -539,7 +744,7 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
     fun downloadAndTranscribeFullVideo(urlOrTopic: String) {
         viewModelScope.launch {
             _isDownloadingPodcast.value = true
-            showMessage("Mendownload audio video full & melakukan transkripsi via Gemini 3.5 Transcribe...")
+            showMessage("Mendownload audio video full & melakukan transkripsi via Gemini...")
             val info = repository.youTubeTranscriptService.fetchVideoInfoAndTranscript(urlOrTopic)
             _podcastVideoInfo.value = info
             _podcastFullTranscript.value = info.transcriptText
