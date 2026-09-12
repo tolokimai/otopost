@@ -1,8 +1,6 @@
 package com.example.viewmodel
 
 import android.app.Application
-import android.graphics.Bitmap
-import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.util.Base64
 import androidx.lifecycle.AndroidViewModel
@@ -11,7 +9,6 @@ import com.example.AutoPostApplication
 import com.example.data.local.entity.*
 import com.example.data.preferences.AppSettings
 import com.example.data.preferences.SavedCarouselStyle
-import com.example.data.remote.ClipContent
 import com.example.data.remote.GeneratedPersona
 import com.example.data.remote.GeneratedPlanItem
 import com.example.data.remote.PodcastSegmentHighlight
@@ -25,7 +22,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.ByteArrayOutputStream
 import java.util.Calendar
 
 sealed class MainTab(val route: String, val titleId: String, val iconName: String) {
@@ -63,6 +59,9 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
 
     private val repository = (application as AutoPostApplication).repository
     val settingsManager = repository.settingsManager
+
+    // Kontroller fitur v2 Podcast Clip (multi-select, pemutar in-app, konten per-klip, thumbnail).
+    val podcastV2 = PodcastV2(viewModelScope, application.applicationContext, repository) { showMessage(it) }
 
     // --- Navigation & Tab State ---
     private val _currentTab = MutableStateFlow<MainTab>(MainTab.Dashboard)
@@ -1032,142 +1031,6 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
         _subtitleStyle.value = style
     }
 
-    // ============================================================
-    // V2: Multi-select segmen, pemutar in-app, konten per-klip, thumbnail
-    // ============================================================
-
-    // --- Multi-select segmen (centang beberapa/semua rekomendasi AI) ---
-    private val _selectedSegmentIndices = MutableStateFlow<Set<Int>>(emptySet())
-    val selectedSegmentIndices = _selectedSegmentIndices.asStateFlow()
-
-    fun toggleSegmentSelection(index: Int) {
-        val cur = _selectedSegmentIndices.value.toMutableSet()
-        if (!cur.add(index)) cur.remove(index)
-        _selectedSegmentIndices.value = cur
-    }
-
-    fun selectAllSegments() {
-        _selectedSegmentIndices.value = _podcastHighlights.value.indices.toSet()
-    }
-
-    fun clearSegmentSelection() {
-        _selectedSegmentIndices.value = emptySet()
-    }
-
-    // --- Pemutar video IN-APP (Media3/ExoPlayer), tanpa aplikasi eksternal ---
-    private val _playingClipUrl = MutableStateFlow<String?>(null)
-    val playingClipUrl = _playingClipUrl.asStateFlow()
-
-    private val _isPlayerFullscreen = MutableStateFlow(false)
-    val isPlayerFullscreen = _isPlayerFullscreen.asStateFlow()
-
-    fun playClipInApp(uriString: String) {
-        _playingClipUrl.value = uriString
-    }
-
-    fun closeInAppPlayer() {
-        _playingClipUrl.value = null
-        _isPlayerFullscreen.value = false
-    }
-
-    fun togglePlayerFullscreen() {
-        _isPlayerFullscreen.value = !_isPlayerFullscreen.value
-    }
-
-    // --- Konten per-klip (AI): metadata + copywriting tiap potongan video ---
-    private val _clipContents = MutableStateFlow<Map<String, ClipContent>>(emptyMap())
-    val clipContents = _clipContents.asStateFlow()
-
-    private val _generatingClipContentFor = MutableStateFlow<String?>(null)
-    val generatingClipContentFor = _generatingClipContentFor.asStateFlow()
-
-    // --- Thumbnail (frame) tiap klip tersimpan: uri -> base64 JPEG ---
-    private val _clipThumbnails = MutableStateFlow<Map<String, String>>(emptyMap())
-    val clipThumbnails = _clipThumbnails.asStateFlow()
-
-    private fun snippetForClip(clip: SavedPodcastClip): String {
-        return _podcastHighlights.value.firstOrNull {
-            it.startSec == clip.startSec && it.endSec == clip.endSec
-        }?.transcriptSnippet
-            ?: _podcastHighlights.value.getOrNull(_selectedHighlightIndex.value)?.transcriptSnippet
-            ?: _podcastFullTranscript.value.take(600)
-    }
-
-    fun generateClipContent(clip: SavedPodcastClip) {
-        viewModelScope.launch {
-            _generatingClipContentFor.value = clip.uri
-            val topic = _podcastVideoInfo.value?.title ?: _studioContentTitle.value
-            val content = try {
-                repository.clipContentService.generateClipContent(clip.title, snippetForClip(clip), topic)
-            } catch (e: Exception) {
-                null
-            }
-            if (content != null) {
-                _clipContents.value = _clipContents.value.toMutableMap().apply { put(clip.uri, content) }
-                showMessage("\u2728 Konten AI untuk '${clip.title.take(24)}' siap. Tekan Copy untuk menyalin.")
-            } else {
-                showMessage("\u274c Gagal generate konten AI untuk klip ini. Cek API key Gemini.")
-            }
-            _generatingClipContentFor.value = null
-        }
-    }
-
-    fun generateContentForAllClips() {
-        viewModelScope.launch {
-            val clips = _savedClips.value
-            if (clips.isEmpty()) {
-                showMessage("Belum ada klip tersimpan.")
-                return@launch
-            }
-            val topic = _podcastVideoInfo.value?.title ?: _studioContentTitle.value
-            var ok = 0
-            for (clip in clips) {
-                if (_clipContents.value.containsKey(clip.uri)) continue
-                _generatingClipContentFor.value = clip.uri
-                val content = try {
-                    repository.clipContentService.generateClipContent(clip.title, snippetForClip(clip), topic)
-                } catch (e: Exception) {
-                    null
-                }
-                if (content != null) {
-                    ok++
-                    _clipContents.value = _clipContents.value.toMutableMap().apply { put(clip.uri, content) }
-                }
-            }
-            _generatingClipContentFor.value = null
-            showMessage("\u2728 Konten AI dibuat untuk $ok klip.")
-        }
-    }
-
-    private fun generateThumbnailsFor(clips: List<SavedPodcastClip>) {
-        if (clips.isEmpty()) return
-        viewModelScope.launch(Dispatchers.IO) {
-            val ctx = getApplication<Application>().applicationContext
-            for (clip in clips) {
-                if (_clipThumbnails.value.containsKey(clip.uri)) continue
-                val b64 = try {
-                    val retriever = MediaMetadataRetriever()
-                    retriever.setDataSource(ctx, Uri.parse(clip.uri))
-                    val frame = retriever.getFrameAtTime(1_000_000L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-                    retriever.release()
-                    if (frame != null && frame.width > 0) {
-                        val targetW = 240
-                        val targetH = (targetW.toFloat() * frame.height / frame.width).toInt().coerceAtLeast(1)
-                        val scaled = Bitmap.createScaledBitmap(frame, targetW, targetH, true)
-                        val baos = ByteArrayOutputStream()
-                        scaled.compress(Bitmap.CompressFormat.JPEG, 80, baos)
-                        Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
-                    } else null
-                } catch (e: Exception) {
-                    null
-                }
-                if (b64 != null) {
-                    _clipThumbnails.value = _clipThumbnails.value.toMutableMap().apply { put(clip.uri, b64) }
-                }
-            }
-        }
-    }
-
     private var podcastSourceUrl: String = ""
 
     fun setStudioMetadata(title: String, hook: String, caption: String, hashtags: String) {
@@ -1252,7 +1115,7 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
             return
         }
         if (repository.clipServerService.isConfigured()) {
-            showMessage("Pakai server: tak perlu unduh manual. Langsung tekan 'Potong Semua' \u2014 server otomatis mengunduh HD & memotong.")
+            showMessage("Pakai server: tak perlu unduh manual. Langsung tekan 'Potong' \u2014 server otomatis mengunduh HD & memotong.")
             return
         }
         viewModelScope.launch {
@@ -1296,11 +1159,9 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
             }
             _isCuttingClip.value = false
             if (result != null) {
-                val newClip = SavedPodcastClip(
-                    highlight.title, result.uri, result.displayName, highlight.startSec, highlight.endSec
-                )
+                val newClip = SavedPodcastClip(highlight.title, result.uri, result.displayName, highlight.startSec, highlight.endSec)
                 _savedClips.value = _savedClips.value + newClip
-                generateThumbnailsFor(listOf(newClip))
+                podcastV2.generateThumbnails(listOf(newClip.uri))
                 showMessage("\u2705 Segmen ${index + 1} tersimpan: ${result.displayName}")
             } else {
                 showMessage("\u274c Gagal memotong segmen ${index + 1}.")
@@ -1342,16 +1203,16 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
                 }
             }
             _savedClips.value = _savedClips.value + newClips
-            generateThumbnailsFor(newClips)
+            podcastV2.generateThumbnails(newClips.map { it.uri })
             _isCuttingClip.value = false
             showMessage("\u2705 $ok/${highlights.size} segmen dipotong & disimpan (Movies/AutoPostStudio).")
         }
     }
 
-    /** Potong hanya segmen yang dicentang (v2). Fallback ke on-device bila server tak aktif. */
+    /** Potong hanya segmen yang dicentang (v2). Server bila aktif, jika tidak fallback on-device. */
     fun cutSelectedSegments() {
         val highlights = _podcastHighlights.value
-        val sel = _selectedSegmentIndices.value.sorted()
+        val sel = podcastV2.selectedSegmentIndices.value.sorted()
         if (highlights.isEmpty()) {
             showMessage("Belum ada rekomendasi segmen.")
             return
@@ -1360,7 +1221,7 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
             showMessage("Centang minimal satu segmen dulu.")
             return
         }
-        val chosen = sel.mapNotNull { i -> highlights.getOrNull(i)?.let { i to it } }
+        val chosen = sel.mapNotNull { i -> highlights.getOrNull(i)?.let { h -> i to h } }
         if (repository.clipServerService.isConfigured()) {
             serverCutSegments(chosen.map { (i, h) ->
                 Triple(h.startSec, h.endSec, "clip_" + (i + 1) + "_" + h.title.take(24))
@@ -1389,7 +1250,7 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
                 }
             }
             _savedClips.value = _savedClips.value + newClips
-            generateThumbnailsFor(newClips)
+            podcastV2.generateThumbnails(newClips.map { it.uri })
             _isCuttingClip.value = false
             showMessage("\u2705 $ok/${chosen.size} segmen terpilih dipotong & disimpan.")
         }
@@ -1466,15 +1327,40 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
             }
             _isCuttingClip.value = false
             if (result != null) {
-                val newClip = SavedPodcastClip(
-                    _studioContentTitle.value, result.uri, result.displayName, startSec, endSec
-                )
+                val newClip = SavedPodcastClip(_studioContentTitle.value, result.uri, result.displayName, startSec, endSec)
                 _savedClips.value = _savedClips.value + newClip
-                generateThumbnailsFor(listOf(newClip))
+                podcastV2.generateThumbnails(listOf(newClip.uri))
                 showMessage("\u2705 Klip $startSec-$endSec detik dipotong & disimpan: ${result.displayName}")
             } else {
                 showMessage("\u274c Gagal memotong klip $startSec-$endSec detik.")
             }
+        }
+    }
+
+    // ============================================================
+    // KONTEN PER-KLIP (AI) v2
+    // ============================================================
+    private fun snippetForClip(clip: SavedPodcastClip): String {
+        return _podcastHighlights.value.firstOrNull { it.startSec == clip.startSec && it.endSec == clip.endSec }?.transcriptSnippet
+            ?: _podcastHighlights.value.getOrNull(_selectedHighlightIndex.value)?.transcriptSnippet
+            ?: _podcastFullTranscript.value.take(600)
+    }
+
+    fun generateClipContent(clip: SavedPodcastClip) {
+        val topic = _podcastVideoInfo.value?.title ?: _studioContentTitle.value
+        podcastV2.generateClipContent(clip.uri, clip.title, snippetForClip(clip), topic)
+    }
+
+    fun generateContentForAllClips() {
+        val clips = _savedClips.value
+        if (clips.isEmpty()) {
+            showMessage("Belum ada klip tersimpan.")
+            return
+        }
+        val topic = _podcastVideoInfo.value?.title ?: _studioContentTitle.value
+        for (clip in clips) {
+            if (podcastV2.clipContents.value.containsKey(clip.uri)) continue
+            podcastV2.generateClipContent(clip.uri, clip.title, snippetForClip(clip), topic)
         }
     }
 
@@ -1491,13 +1377,12 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
 
     private fun clipActionHint(): String =
         if (repository.clipServerService.isConfigured())
-            "Tekan 'Potong Semua' \u2014 server akan unduh HD & memotong otomatis (reframe ke wajah)."
+            "Centang segmen lalu tekan 'Potong Terpilih' \u2014 server unduh HD & memotong otomatis (reframe ke wajah)."
         else "Unduh video lalu potong per segmen."
 
     /**
      * Tentukan transkrip final & rekomendasi segmen. Bila transkrip ASLI tersedia (server/caption),
-     * pakai langsung tanpa 'menerjemahkan' ulang ke Gemini (yang bisa jadi teks contoh).
-     * Jumlah segmen mengikuti rekomendasi AI, dinamis sesuai durasi & panjang transkrip.
+     * pakai langsung tanpa 'menerjemahkan' ulang ke Gemini. Jumlah segmen dinamis sesuai durasi & panjang transkrip.
      */
     private suspend fun resolveTranscriptAndHighlights(info: YouTubeVideoInfo, applyMetadata: Boolean) {
         val finalTranscript: String
@@ -1516,9 +1401,7 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
         val highlights = repository.geminiService.analyzePodcastTranscript(info.title, finalTranscript, maxSegments)
         _podcastHighlights.value = highlights
         _selectedHighlightIndex.value = 0
-        _selectedSegmentIndices.value = highlights.indices.toSet()
-        _clipContents.value = emptyMap()
-        _clipThumbnails.value = emptyMap()
+        podcastV2.resetForNewVideo(highlights.size)
         if (highlights.isNotEmpty()) {
             _clipStartSec.value = highlights[0].startSec
             _clipEndSec.value = highlights[0].endSec
@@ -1568,7 +1451,7 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
 
     /** Putar klip tersimpan (preview) memakai pemutar IN-APP (Media3), tanpa aplikasi eksternal. */
     fun playSavedClip(uriString: String) {
-        _playingClipUrl.value = uriString
+        podcastV2.playClipInApp(uriString)
     }
 
     private suspend fun fetchTranscriptSmart(
@@ -1638,7 +1521,7 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             _isCuttingClip.value = true
             val subInfo = if (_subtitleEnabled.value) " + subtitle (${_subtitleStyle.value})" else ""
-            showMessage("\u2702\ufe0f Server mengunduh video HD & memotong ${segments.size} segmen (reframe ke wajah)$subInfo... Ini bisa beberapa menit, mohon tunggu.")
+            showMessage("\u2702\ufe0f Server mengunduh video HD & memotong ${segments.size} segmen (reframe ke wajah)$subInfo... Bisa beberapa menit, mohon tunggu.")
             val ctx = getApplication<Application>().applicationContext
             val clips = try {
                 repository.clipServerService.requestClips(
@@ -1667,4 +1550,250 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
                 }
             }
             _savedClips.value = _savedClips.value + saved
-            generate
+            podcastV2.generateThumbnails(saved.map { it.uri })
+            _isCuttingClip.value = false
+            showMessage("\u2705 $ok/${clips.size} klip dari server tersimpan di galeri (Movies/AutoPostStudio).")
+        }
+    }
+
+    // 4c. SELF VIDEO STUDIO STATE
+    private val _selfVideoHookText = MutableStateFlow("Trik Rahasia 3 Detik Pertama \ud83d\udca5")
+    val selfVideoHookText = _selfVideoHookText.asStateFlow()
+
+    private val _selfVideoSubtitles = MutableStateFlow<List<String>>(
+        listOf(
+            "Kalau kamu pengen views meledak...",
+            "Kuncinya adalah jangan bertele-tele di awal video!",
+            "Terapkan 3 formula hook ini sekarang juga.",
+            "Follow untuk tips strategi konten viral selanjutnya!"
+        )
+    )
+    val selfVideoSubtitles = _selfVideoSubtitles.asStateFlow()
+
+    private val _isGeneratingVideoCopy = MutableStateFlow(false)
+    val isGeneratingVideoCopy = _isGeneratingVideoCopy.asStateFlow()
+
+    fun setSelfVideoHookText(text: String) {
+        _selfVideoHookText.value = text
+    }
+
+    fun updateSelfVideoSubtitles(subtitles: List<String>) {
+        _selfVideoSubtitles.value = subtitles
+    }
+
+    fun generateVideoScript(topic: String) {
+        viewModelScope.launch {
+            _isGeneratingVideoCopy.value = true
+            val copy = repository.geminiService.generateVideoHooksAndCaptions(topic, "Santai & Hook Kuat")
+            _selfVideoHookText.value = copy.viralHook
+            _studioContentHook.value = copy.viralHook
+            _studioContentCaption.value = copy.caption
+            _studioContentHashtags.value = copy.hashtags
+            _selfVideoSubtitles.value = copy.subtitles
+            _isGeneratingVideoCopy.value = false
+            showMessage("Naskah video & subtitle otomatis dibuat!")
+        }
+    }
+
+    // 4d. BUAT VIDEO (AI VIDEO GENERATOR - VEO 3) STATE
+    private val _aiVideoPrompt = MutableStateFlow("Cinematic drone shot of a futuristic creator studio with neon lighting, 4K smooth motion")
+    val aiVideoPrompt = _aiVideoPrompt.asStateFlow()
+
+    private val _aiVideoAspectRatio = MutableStateFlow("9:16")
+    val aiVideoAspectRatio = _aiVideoAspectRatio.asStateFlow()
+
+    private val _aiVideoStylePreset = MutableStateFlow("Cinematic 4K")
+    val aiVideoStylePreset = _aiVideoStylePreset.asStateFlow()
+    val aiVideoStyle = _aiVideoStylePreset.asStateFlow()
+
+    private val _aiVideoDurationSec = MutableStateFlow(5)
+    val aiVideoDurationSec = _aiVideoDurationSec.asStateFlow()
+    val aiVideoDurationSeconds = _aiVideoDurationSec.asStateFlow()
+
+    private val _aiVideoCreationMode = MutableStateFlow("TEXT_TO_VIDEO")
+    val aiVideoCreationMode = _aiVideoCreationMode.asStateFlow()
+
+    private val _aiVideoMotionPrompt = MutableStateFlow("Slow cinematic push-in with floating golden bokeh particles")
+    val aiVideoMotionPrompt = _aiVideoMotionPrompt.asStateFlow()
+
+    private val _isGeneratingAiVideo = MutableStateFlow(false)
+    val isGeneratingAiVideo = _isGeneratingAiVideo.asStateFlow()
+
+    private val _generatedVideoResult = MutableStateFlow<com.example.data.remote.GeneratedVideoResult?>(null)
+    val generatedVideoResult = _generatedVideoResult.asStateFlow()
+
+    fun setAiVideoPrompt(prompt: String) {
+        _aiVideoPrompt.value = prompt
+    }
+
+    fun setAiVideoAspectRatio(ratio: String) {
+        _aiVideoAspectRatio.value = ratio
+    }
+
+    fun setAiVideoStylePreset(preset: String) {
+        _aiVideoStylePreset.value = preset
+    }
+
+    fun setAiVideoStyle(preset: String) {
+        _aiVideoStylePreset.value = preset
+    }
+
+    fun setAiVideoDurationSec(duration: Int) {
+        _aiVideoDurationSec.value = duration
+    }
+
+    fun setAiVideoDurationSeconds(duration: Int) {
+        _aiVideoDurationSec.value = duration
+    }
+
+    fun applyAiVideoToPost() {
+        val result = _generatedVideoResult.value
+        _studioContentHook.value = result?.viralHook ?: "Tonton Video AI Keren Ini!"
+        _studioContentTitle.value = "AI Video: " + _aiVideoPrompt.value.take(30)
+        _studioContentCaption.value = "Video cinematic dibuat secara otomatis dengan AI Veo 3. Simak sampai habis & share ke teman kreatormu! #aivideo #veo3 #creator"
+        _studioContentHashtags.value = "#aivideo #veo3 #creator #ai #fyp"
+        showMessage("Video AI berhasil dipasang untuk postingan!")
+    }
+
+    fun setAiVideoCreationMode(mode: String) {
+        _aiVideoCreationMode.value = mode
+    }
+
+    fun setAiVideoMotionPrompt(prompt: String) {
+        _aiVideoMotionPrompt.value = prompt
+    }
+
+    fun generateAiVideoFromText() {
+        viewModelScope.launch {
+            _isGeneratingAiVideo.value = true
+            showMessage("Menjalankan Veo 3 (veo-3.1-fast-generate-preview) Aspect Ratio: ${_aiVideoAspectRatio.value}...")
+            val result = repository.geminiService.generateVeoVideoFromText(
+                prompt = _aiVideoPrompt.value,
+                aspectRatio = _aiVideoAspectRatio.value,
+                stylePreset = _aiVideoStylePreset.value,
+                durationSec = _aiVideoDurationSec.value
+            )
+            _generatedVideoResult.value = result
+            _studioContentHook.value = result.viralHook
+            _studioContentTitle.value = "AI Video: " + _aiVideoPrompt.value.take(30)
+            _studioContentCaption.value = "Video dibuat menggunakan AI Veo 3. Keren banget hasilnya! Gimana menurutmu? \ud83d\udc47"
+            _isGeneratingAiVideo.value = false
+            showMessage("Video Veo 3 berhasil di-generate!")
+        }
+    }
+
+    fun animateImageToAiVideo(imageDesc: String? = null) {
+        viewModelScope.launch {
+            _isGeneratingAiVideo.value = true
+            val desc = imageDesc ?: _carouselSlides.value.firstOrNull()?.headline ?: "Foto/Ilustrasi Konten"
+            showMessage("Menganimasikan gambar ke video via Veo 3...")
+            val result = repository.geminiService.animateImageWithVeo(
+                imageDescription = desc,
+                motionPrompt = _aiVideoMotionPrompt.value,
+                aspectRatio = _aiVideoAspectRatio.value
+            )
+            _generatedVideoResult.value = result
+            _studioContentHook.value = result.viralHook
+            _studioContentTitle.value = "Animate: " + desc.take(25)
+            _isGeneratingAiVideo.value = false
+            showMessage("Animasi video Veo 3 berhasil dibuat!")
+        }
+    }
+
+    fun saveCurrentStudioToSchedule(
+        targetPlatforms: List<SocialPlatform>,
+        scheduledTimeMillis: Long,
+        asDraft: Boolean = false
+    ) {
+        viewModelScope.launch {
+            val format = when (_studioSubMode.value) {
+                StudioSubMode.CAROUSEL -> ContentFormat.CAROUSEL
+                StudioSubMode.PODCAST_CLIP -> ContentFormat.PODCAST_CLIP
+                StudioSubMode.SELF_VIDEO -> ContentFormat.SELF_VIDEO
+                StudioSubMode.AI_VIDEO -> ContentFormat.AI_VIDEO
+            }
+
+            val podcastInfo = _podcastVideoInfo.value
+            val selectedHighlight = _podcastHighlights.value.getOrNull(_selectedHighlightIndex.value)
+            val generatedVideo = _generatedVideoResult.value
+
+            val post = ScheduledPostEntity(
+                planItemId = _studioActivePlanItemId.value,
+                title = _studioContentTitle.value.ifBlank { "Konten AutoPost Studio" },
+                format = format,
+                hook = _studioContentHook.value,
+                caption = _studioContentCaption.value,
+                hashtags = _studioContentHashtags.value,
+                targetPlatforms = targetPlatforms.ifEmpty { listOf(SocialPlatform.TIKTOK, SocialPlatform.INSTAGRAM, SocialPlatform.YOUTUBE_SHORTS) },
+                scheduledTimeMillis = scheduledTimeMillis,
+                status = if (asDraft) PostStatus.DRAFT else PostStatus.SCHEDULED,
+                carouselSlidesJson = if (format == ContentFormat.CAROUSEL) {
+                    val array = org.json.JSONArray()
+                    _carouselSlides.value.forEach { s ->
+                        val o = org.json.JSONObject()
+                        o.put("slideNumber", s.slideNumber)
+                        o.put("headline", s.headline)
+                        o.put("body", s.body)
+                        o.put("subtext", s.subtext)
+                        o.put("imageUrl", s.imageUrl)
+                        o.put("imageBase64", s.imageBase64)
+                        o.put("imagePrompt", s.imagePrompt)
+                        o.put("themeName", s.themeName)
+                        array.put(o)
+                    }
+                    array.toString()
+                } else null,
+                podcastVideoUrl = podcastInfo?.videoId,
+                podcastSegmentStartSec = _clipStartSec.value,
+                podcastSegmentEndSec = _clipEndSec.value,
+                podcastChannelName = podcastInfo?.channelName ?: "",
+                subtitlesJson = when (format) {
+                    ContentFormat.SELF_VIDEO -> {
+                        val arr = org.json.JSONArray()
+                        _selfVideoSubtitles.value.forEach { arr.put(it) }
+                        arr.toString()
+                    }
+                    ContentFormat.AI_VIDEO -> {
+                        val arr = org.json.JSONArray()
+                        generatedVideo?.dynamicSubtitles?.forEach { arr.put(it) }
+                        arr.toString()
+                    }
+                    else -> null
+                },
+                generatedVideoUrl = when (format) {
+                    ContentFormat.AI_VIDEO -> generatedVideo?.videoUrl
+                    ContentFormat.PODCAST_CLIP -> _savedClips.value.lastOrNull()?.uri
+                    else -> null
+                },
+                videoAspectRatio = when (format) {
+                    ContentFormat.AI_VIDEO -> _aiVideoAspectRatio.value
+                    ContentFormat.PODCAST_CLIP -> _clipAspectRatio.value
+                    else -> "9:16"
+                }
+            )
+
+            repository.savePost(post)
+            showMessage(if (asDraft) "Konten disimpan sebagai Draft!" else "Konten berhasil dijadwalkan masuk antrean posting!")
+            selectTab(MainTab.Dashboard)
+        }
+    }
+
+    init {
+        viewModelScope.launch {
+            val existing = repository.allPersonas.first()
+            if (existing.isEmpty()) {
+                val samplePersona = PersonaEntity(
+                    brandName = "AutoPost Creator Hub",
+                    niche = "Tech, Bisnis & Produktivitas",
+                    targetAudience = "Kreator konten, solopreneur & freelancer muda",
+                    languageStyle = "Santai & Edukatif",
+                    tone = "Energetic & Praktis",
+                    language = "ID",
+                    accountReferences = "@garyvee, @feliciaputri, @cleocreative",
+                    isDefault = true
+                )
+                repository.savePersona(samplePersona)
+            }
+        }
+    }
+}
