@@ -86,18 +86,46 @@ class ClipServerService(
                 val body = resp.body?.string() ?: return@withContext null
                 if (!resp.isSuccessful) return@withContext null
                 val o = JSONObject(body)
+                val segmentArray = o.optJSONArray("segments")
+                val timestampedTranscript = buildString {
+                    if (segmentArray != null) {
+                        for (i in 0 until segmentArray.length()) {
+                            val segment = segmentArray.optJSONObject(i) ?: continue
+                            val text = segment.optString("text").trim()
+                            if (text.isBlank()) continue
+                            val startSec = segment.optDouble("startSec", -1.0)
+                            if (startSec < 0) continue
+                            append('[')
+                            append(formatClock(startSec.toInt()))
+                            append("] ")
+                            append(text)
+                            append('\n')
+                        }
+                    }
+                }.trim()
+                val originalTranscript = o.optString("transcriptText", "").trim()
+                val transcript = timestampedTranscript.ifBlank { originalTranscript }
                 ServerTranscript(
                     videoId = o.optString("videoId"),
                     title = o.optString("title"),
                     channelName = o.optString("channelName"),
                     durationSec = o.optInt("durationSec", 0),
-                    hasTranscript = o.optBoolean("hasTranscript", false),
-                    transcriptText = o.optString("transcriptText", "")
+                    hasTranscript = o.optBoolean("hasTranscript", false) && transcript.isNotBlank(),
+                    transcriptText = transcript
                 )
             }
         } catch (e: Exception) {
             null
         }
+    }
+
+    private fun formatClock(totalSec: Int): String {
+        val safe = totalSec.coerceAtLeast(0)
+        val hours = safe / 3600
+        val minutes = (safe % 3600) / 60
+        val seconds = safe % 60
+        return if (hours > 0) String.format("%d:%02d:%02d", hours, minutes, seconds)
+        else String.format("%02d:%02d", minutes, seconds)
     }
 
     /**
