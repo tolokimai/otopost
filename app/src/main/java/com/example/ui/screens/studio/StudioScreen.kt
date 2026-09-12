@@ -672,76 +672,149 @@ fun PodcastClipStudioContent(viewModel: AutoPostViewModel) {
         }
 
         // 5) SEGMEN REKOMENDASI AI (SELURUH VIDEO) - DAFTAR CHECKBOX
-        if (highlights.isNotEmpty()) {
+        val hasPodcastContext = selectedCandidate != null || videoInfo != null ||
+            fullTranscript.isNotBlank() || highlights.isNotEmpty() || isLoading
+        if (hasPodcastContext) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text("5. Rekomendasi Potongan AI (${highlights.size})", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                Row {
-                    TextButton(onClick = { viewModel.podcastV2.selectAll(highlights.size) }) { Text("Centang Semua", fontSize = 11.sp) }
-                    TextButton(onClick = { viewModel.podcastV2.clearSelection() }) { Text("Hapus", fontSize = 11.sp) }
+                if (highlights.isNotEmpty()) {
+                    Row {
+                        TextButton(onClick = { viewModel.podcastV2.selectAll(highlights.size) }) { Text("Centang Semua", fontSize = 11.sp) }
+                        TextButton(onClick = { viewModel.podcastV2.clearSelection() }) { Text("Hapus", fontSize = 11.sp) }
+                    }
                 }
             }
-            Text(
-                "Centang segmen yang ingin dipotong (bisa semua atau sebagian). Tersimpan ${selectedSegmentIndices.size} terpilih.",
-                fontSize = 10.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
 
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                highlights.forEachIndexed { index, hl ->
-                    val checked = selectedSegmentIndices.contains(index)
+            when {
+                isLoading -> {
                     Card(
-                        modifier = Modifier.fillMaxWidth().clickable { viewModel.podcastV2.toggleSegmentSelection(index) },
                         shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.cardColors(
-                            containerColor = if (checked) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f) else MaterialTheme.colorScheme.surface
-                        ),
-                        border = androidx.compose.foundation.BorderStroke(
-                            1.dp,
-                            if (checked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
-                        )
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
                     ) {
-                        Row(modifier = Modifier.padding(10.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Checkbox(
-                                checked = checked,
-                                onCheckedChange = { viewModel.podcastV2.toggleSegmentSelection(index) }
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                            Text(
+                                "AI sedang menganalisis seluruh transkrip asli untuk menemukan semua segmen menarik (bisa lebih dari 3, sesuai isi video)...",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text("#${index + 1} \u2022 ${hl.title}", fontSize = 13.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                                    Surface(shape = RoundedCornerShape(6.dp), color = UtilityBlue600.copy(alpha = 0.2f)) {
-                                        Text(
-                                            "${secToClock(hl.startSec)} - ${secToClock(hl.endSec)}",
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = UtilityBlue400,
-                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                        )
+                        }
+                    }
+                }
+                highlights.isNotEmpty() -> {
+                    Text(
+                        "Centang segmen yang ingin dipotong (bisa semua atau sebagian). Tersimpan ${selectedSegmentIndices.size} terpilih.",
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        highlights.forEachIndexed { index, hl ->
+                            val checked = selectedSegmentIndices.contains(index)
+                            Card(
+                                modifier = Modifier.fillMaxWidth().clickable { viewModel.podcastV2.toggleSegmentSelection(index) },
+                                shape = RoundedCornerShape(12.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (checked) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f) else MaterialTheme.colorScheme.surface
+                                ),
+                                border = androidx.compose.foundation.BorderStroke(
+                                    1.dp,
+                                    if (checked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
+                                )
+                            ) {
+                                Row(modifier = Modifier.padding(10.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Checkbox(
+                                        checked = checked,
+                                        onCheckedChange = { viewModel.podcastV2.toggleSegmentSelection(index) }
+                                    )
+                                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text("#${index + 1} \u2022 ${hl.title}", fontSize = 13.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                                            Surface(shape = RoundedCornerShape(6.dp), color = UtilityBlue600.copy(alpha = 0.2f)) {
+                                                Text(
+                                                    "${secToClock(hl.startSec)} - ${secToClock(hl.endSec)}",
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = UtilityBlue400,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                        }
+                                        if (hl.hook.isNotBlank()) {
+                                            Text("Hook: ${hl.hook}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface)
+                                        }
+                                        if (hl.transcriptSnippet.isNotBlank()) {
+                                            Text(
+                                                hl.transcriptSnippet,
+                                                fontSize = 11.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 3,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                        if (hl.reasonWhyViral.isNotBlank()) {
+                                            Text("\ud83d\udd25 ${hl.reasonWhyViral}", fontSize = 10.sp, color = MaterialTheme.colorScheme.primary)
+                                        }
                                     }
                                 }
-                                if (hl.hook.isNotBlank()) {
-                                    Text("Hook: ${hl.hook}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface)
-                                }
-                                if (hl.transcriptSnippet.isNotBlank()) {
-                                    Text(
-                                        hl.transcriptSnippet,
-                                        fontSize = 11.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 3,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                                if (hl.reasonWhyViral.isNotBlank()) {
-                                    Text("\ud83d\udd25 ${hl.reasonWhyViral}", fontSize = 10.sp, color = MaterialTheme.colorScheme.primary)
-                                }
                             }
+                        }
+                    }
+                }
+                else -> {
+                    Card(
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = StatusFailed.copy(alpha = 0.10f))
+                    ) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth().padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(Icons.Default.Info, contentDescription = null, tint = StatusFailed, modifier = Modifier.size(20.dp))
+                                Text("Belum ada rekomendasi AI", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            }
+                            Text(
+                                "AI belum menghasilkan segmen dari transkrip asli video ini. Ini bisa terjadi jika transkrip belum termuat, video tanpa caption / diblokir, GEMINI API Key belum diisi di Settings, atau tidak ada bagian yang lolos validasi transkrip asli. Rekomendasi tidak pernah dikarang \u2014 hanya diambil dari transkrip nyata.",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Button(
+                                onClick = {
+                                    when {
+                                        selectedCandidate != null -> viewModel.selectPodcastCandidate(selectedCandidate!!)
+                                        manualUrl.isNotBlank() -> viewModel.loadPodcastForTopic(manualUrl)
+                                        else -> viewModel.showMessage("Pilih video atau tempel link YouTube dulu, lalu coba lagi.")
+                                    }
+                                },
+                                enabled = !isLoading,
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Analisis Ulang Transkrip", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                            Text(
+                                "Atau gunakan \"Potong Manual\" di bawah untuk menentukan menit/detik sendiri.",
+                                fontSize = 10.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
                     }
                 }
