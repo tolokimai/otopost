@@ -3,6 +3,7 @@ package com.example.viewmodel
 import android.app.Application
 import android.net.Uri
 import android.util.Base64
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.AutoPostApplication
@@ -316,34 +317,39 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun sendPlanItemToStudio(item: ContentPlanItemEntity) {
-        viewModelScope.launch {
-            repository.markItemSentToStudio(item.id)
-            _studioActivePlanItemId.value = item.id
-            _studioContentTitle.value = item.title
-            _studioContentHook.value = item.hook
-            _studioContentCaption.value = item.captionDraft
-            _studioContentHashtags.value = item.hashtags
+        _studioActivePlanItemId.value = item.id
+        _studioContentTitle.value = item.title
+        _studioContentHook.value = item.hook
+        _studioContentCaption.value = item.captionDraft
+        _studioContentHashtags.value = item.hashtags
 
-            when (item.format) {
-                ContentFormat.CAROUSEL -> {
-                    _studioSubMode.value = StudioSubMode.CAROUSEL
-                    generateCarouselSlidesFromCurrent(item.title, item.hook, 5)
-                }
-                ContentFormat.PODCAST_CLIP -> {
-                    _studioSubMode.value = StudioSubMode.PODCAST_CLIP
-                    searchPodcastCandidates(item.title)
-                }
-                ContentFormat.SELF_VIDEO -> {
-                    _studioSubMode.value = StudioSubMode.SELF_VIDEO
-                    generateVideoScript(item.title)
-                }
-                ContentFormat.AI_VIDEO -> {
-                    _studioSubMode.value = StudioSubMode.AI_VIDEO
-                    setAiVideoPrompt("${item.title}, ${item.hook}")
-                }
+        when (item.format) {
+            ContentFormat.CAROUSEL -> {
+                _studioSubMode.value = StudioSubMode.CAROUSEL
+                generateCarouselSlidesFromCurrent(item.title, item.hook, 5)
             }
-            selectTab(MainTab.Studio)
-            showMessage("Item '${item.title.take(25)}...' dikirim ke Studio!")
+            ContentFormat.PODCAST_CLIP -> {
+                _studioSubMode.value = StudioSubMode.PODCAST_CLIP
+                searchPodcastCandidates(item.title)
+            }
+            ContentFormat.SELF_VIDEO -> {
+                _studioSubMode.value = StudioSubMode.SELF_VIDEO
+                generateVideoScript(item.title)
+            }
+            ContentFormat.AI_VIDEO -> {
+                _studioSubMode.value = StudioSubMode.AI_VIDEO
+                setAiVideoPrompt("${item.title}, ${item.hook}")
+            }
+        }
+        selectTab(MainTab.Studio)
+        showMessage("Item '${item.title.take(25)}...' dikirim ke Studio!")
+
+        viewModelScope.launch {
+            try {
+                repository.markItemSentToStudio(item.id)
+            } catch (e: Exception) {
+                Log.w("AutoPostViewModel", "markItemSentToStudio failed", e)
+            }
         }
     }
 
@@ -1058,20 +1064,26 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
                 showMessage("Isi 'YouTube API Key' dulu di Settings agar mesin bisa mencari video podcast relevan.")
                 return@launch
             }
-            val results = repository.youTubeSearchService.searchRelevantVideos(theme, 3)
-            _podcastCandidates.value = results
-            _isSearchingPodcast.value = false
-            if (results.isEmpty()) {
-                _noRelevantPodcast.value = true
-                showMessage("Tidak ada video YouTube relevan untuk tema ini \u2014 sebaiknya ganti isi konten rencana ini.")
-                return@launch
-            }
-            if (settings.value.autoPickBestPodcast) {
-                val best = results.maxByOrNull { it.viewCount } ?: results.first()
-                selectPodcastCandidate(best)
-                showMessage("Mesin otomatis memilih: ${best.title.take(40)}. Bisa diganti manual kapan saja.")
-            } else {
-                showMessage("Ditemukan ${results.size} video relevan. Pilih salah satu untuk lanjut.")
+            try {
+                val results = repository.youTubeSearchService.searchRelevantVideos(theme, 3)
+                _podcastCandidates.value = results
+                _isSearchingPodcast.value = false
+                if (results.isEmpty()) {
+                    _noRelevantPodcast.value = true
+                    showMessage("Tidak ada video YouTube relevan untuk tema ini \u2014 sebaiknya ganti isi konten rencana ini.")
+                    return@launch
+                }
+                if (settings.value.autoPickBestPodcast) {
+                    val best = results.maxByOrNull { it.viewCount } ?: results.first()
+                    selectPodcastCandidate(best)
+                    showMessage("Mesin otomatis memilih: ${best.title.take(40)}. Bisa diganti manual kapan saja.")
+                } else {
+                    showMessage("Ditemukan ${results.size} video relevan. Pilih salah satu untuk lanjut.")
+                }
+            } catch (e: Exception) {
+                _isSearchingPodcast.value = false
+                Log.e("AutoPostViewModel", "searchPodcastCandidates failed", e)
+                showMessage("Gagal mencari video YouTube: ${e.message ?: "Terjadi kesalahan"}")
             }
         }
     }
@@ -1083,18 +1095,24 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
         podcastSourceUrl = candidate.url.ifBlank { watchUrlFor(candidate.videoId) }
         viewModelScope.launch {
             _isLoadingPodcast.value = true
-            val info = fetchTranscriptSmart(
-                videoUrl = podcastSourceUrl,
-                videoId = candidate.videoId,
-                fallbackTitle = candidate.title,
-                fallbackChannel = candidate.channelName,
-                durationFormatted = candidate.durationFormatted
-            )
-            _podcastVideoInfo.value = info
-            resolveTranscriptAndHighlights(info, applyMetadata = true)
-            _isLoadingPodcast.value = false
-            val src = if (info.isSample) "\u26a0\ufe0f transkrip CONTOH (server/caption tak tersedia)" else "transkrip ASLI"
-            showMessage("$src \u2022 ${_podcastHighlights.value.size} segmen rekomendasi AI siap. " + clipActionHint())
+            try {
+                val info = fetchTranscriptSmart(
+                    videoUrl = podcastSourceUrl,
+                    videoId = candidate.videoId,
+                    fallbackTitle = candidate.title,
+                    fallbackChannel = candidate.channelName,
+                    durationFormatted = candidate.durationFormatted
+                )
+                _podcastVideoInfo.value = info
+                resolveTranscriptAndHighlights(info, applyMetadata = true)
+                val src = if (info.isSample) "\u26a0\ufe0f transkrip CONTOH (server/caption tak tersedia)" else "transkrip ASLI"
+                showMessage("$src \u2022 ${_podcastHighlights.value.size} segmen rekomendasi AI siap. " + clipActionHint())
+            } catch (e: Exception) {
+                Log.e("AutoPostViewModel", "selectPodcastCandidate failed", e)
+                showMessage("Gagal memproses podcast: ${e.message ?: "Terjadi kesalahan"}")
+            } finally {
+                _isLoadingPodcast.value = false
+            }
         }
     }
 
@@ -1259,14 +1277,20 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
     fun loadPodcastForTopic(urlOrTopic: String) {
         viewModelScope.launch {
             _isLoadingPodcast.value = true
-            val info = fetchTranscriptSmartForUrl(urlOrTopic)
-            podcastSourceUrl = if (looksLikeUrl(urlOrTopic)) urlOrTopic.trim()
-                else if (info.videoId.isNotBlank()) watchUrlFor(info.videoId) else ""
-            _podcastVideoInfo.value = info
-            resolveTranscriptAndHighlights(info, applyMetadata = true)
-            _isLoadingPodcast.value = false
-            val src = if (info.isSample) "\u26a0\ufe0f CONTOH" else "ASLI"
-            showMessage("Transkrip podcast ($src) dimuat \u2022 ${_podcastHighlights.value.size} segmen viral diidentifikasi! " + clipActionHint())
+            try {
+                val info = fetchTranscriptSmartForUrl(urlOrTopic)
+                podcastSourceUrl = if (looksLikeUrl(urlOrTopic)) urlOrTopic.trim()
+                    else if (info.videoId.isNotBlank()) watchUrlFor(info.videoId) else ""
+                _podcastVideoInfo.value = info
+                resolveTranscriptAndHighlights(info, applyMetadata = true)
+                val src = if (info.isSample) "\u26a0\ufe0f CONTOH" else "ASLI"
+                showMessage("Transkrip podcast ($src) dimuat \u2022 ${_podcastHighlights.value.size} segmen viral diidentifikasi! " + clipActionHint())
+            } catch (e: Exception) {
+                Log.e("AutoPostViewModel", "loadPodcastForTopic failed", e)
+                showMessage("Gagal memuat transkrip podcast: ${e.message ?: "Terjadi kesalahan"}")
+            } finally {
+                _isLoadingPodcast.value = false
+            }
         }
     }
 
@@ -1274,14 +1298,20 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             _isDownloadingPodcast.value = true
             showMessage("Mengambil transkrip & menganalisis video...")
-            val info = fetchTranscriptSmartForUrl(urlOrTopic)
-            podcastSourceUrl = if (looksLikeUrl(urlOrTopic)) urlOrTopic.trim()
-                else if (info.videoId.isNotBlank()) watchUrlFor(info.videoId) else ""
-            _podcastVideoInfo.value = info
-            resolveTranscriptAndHighlights(info, applyMetadata = false)
-            _isDownloadingPodcast.value = false
-            val src = if (info.isSample) "\u26a0\ufe0f CONTOH" else "ASLI"
-            showMessage("Video ditranskrip ($src) \u2022 ${_podcastHighlights.value.size} segmen siap dipotong. " + clipActionHint())
+            try {
+                val info = fetchTranscriptSmartForUrl(urlOrTopic)
+                podcastSourceUrl = if (looksLikeUrl(urlOrTopic)) urlOrTopic.trim()
+                    else if (info.videoId.isNotBlank()) watchUrlFor(info.videoId) else ""
+                _podcastVideoInfo.value = info
+                resolveTranscriptAndHighlights(info, applyMetadata = false)
+                val src = if (info.isSample) "\u26a0\ufe0f CONTOH" else "ASLI"
+                showMessage("Video ditranskrip ($src) \u2022 ${_podcastHighlights.value.size} segmen siap dipotong. " + clipActionHint())
+            } catch (e: Exception) {
+                Log.e("AutoPostViewModel", "downloadAndTranscribeFullVideo failed", e)
+                showMessage("Gagal mentranskrip video: ${e.message ?: "Terjadi kesalahan"}")
+            } finally {
+                _isDownloadingPodcast.value = false
+            }
         }
     }
 
@@ -1391,14 +1421,25 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
             _podcastTranscriptionResult.value = null
             _podcastFullTranscript.value = finalTranscript
         } else {
-            val transcription = repository.geminiService.transcribeAudioWithGemini(info.transcriptText, info.title)
+            val transcription = try {
+                repository.geminiService.transcribeAudioWithGemini(info.transcriptText, info.title)
+            } catch (e: Exception) {
+                Log.w("AutoPostViewModel", "transcribeAudioWithGemini failed", e)
+                null
+            }
             _podcastTranscriptionResult.value = transcription
-            finalTranscript = transcription.fullText
+            finalTranscript = transcription?.fullText ?: info.transcriptText
             _podcastFullTranscript.value = finalTranscript
         }
 
         val maxSegments = recommendedSegmentCount(info.durationFormatted, finalTranscript)
-        val highlights = repository.geminiService.analyzePodcastTranscript(info.title, finalTranscript, maxSegments)
+        val highlights = try {
+            repository.geminiService.analyzePodcastTranscript(info.title, finalTranscript, maxSegments)
+        } catch (e: Exception) {
+            Log.w("AutoPostViewModel", "analyzePodcastTranscript failed", e)
+            showMessage(e.message ?: "Gagal menganalisis rekomendasi podcast.")
+            emptyList()
+        }
         _podcastHighlights.value = highlights
         _selectedHighlightIndex.value = 0
         podcastV2.resetForNewVideo(highlights.size)

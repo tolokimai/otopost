@@ -62,6 +62,10 @@ class AccurateGeminiService(private val getApiKey: () -> String) {
         motionPrompt: String,
         aspectRatio: String = "9:16"
     ) = delegate.animateImageWithVeo(imageDescription, motionPrompt, aspectRatio)
+    suspend fun transcribeAudioWithGemini(
+        rawTranscriptOrTopic: String,
+        videoTitle: String
+    ): TranscriptionResult = delegate.transcribeAudioWithGemini(rawTranscriptOrTopic, videoTitle)
 
     private data class TimedLine(val sec: Int, val raw: String, val text: String)
     private data class TranscriptChunk(
