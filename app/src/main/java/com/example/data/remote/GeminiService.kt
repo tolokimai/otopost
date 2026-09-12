@@ -388,35 +388,116 @@ class GeminiService(private val getApiKey: () -> String) {
             Log.e("GeminiService", "Podcast analysis fallback", e)
         }
 
-        listOf(
-            PodcastSegmentHighlight(
-                startSec = 35,
-                endSec = 85,
-                durationFormatted = "00:35 - 01:25 (50s)",
-                title = "Alasan Kenapa Kerja Keras Saja Tidak Cukup",
-                hook = "Jangan tertipu dengan hustle culture tanpa arah yang jelas!",
-                reasonWhyViral = "Menyentuh keresahan audiens usia 20-30 tahun & membuka perspektif baru.",
-                transcriptSnippet = "Waktu lu mikir kerja 18 jam sehari itu keren, lu lupa kalau strategi itu yang menentukan hasilnya..."
-            ),
-            PodcastSegmentHighlight(
-                startSec = 140,
-                endSec = 195,
-                durationFormatted = "02:20 - 03:15 (55s)",
-                title = "Satu Kebiasaan Sederhana Pengubah Hidup",
-                hook = "Kalau kamu cuma bisa ubah satu hal besok pagi, lakukan ini!",
-                reasonWhyViral = "Actionable advice dengan zero barrier to entry.",
-                transcriptSnippet = "Gue mulai dari nulis 3 prioritas tiap malam sebelum tidur, dan itu ngubah cara gue kerja total..."
-            ),
-            PodcastSegmentHighlight(
-                startSec = 280,
-                endSec = 330,
-                durationFormatted = "04:40 - 05:30 (50s)",
-                title = "Pelajaran Termahal Saat Bangkrut",
-                hook = "Gue kehilangan 500 juta dalam 1 malam karena kesalahan sepele ini...",
-                reasonWhyViral = "High drama, high vulnerability & invaluable business lesson.",
-                transcriptSnippet = "Bukan masalah market sepi, tapi karena gue gak punya dana darurat operasional saat itu..."
+        // Fallback JUJUR: turunkan rekomendasi langsung dari TRANSKRIP ASLI (timestamp + kalimat nyata),
+        // bukan contoh yang dikarang. Memastikan Step 5 tidak pernah kosong selama transkrip tersedia,
+        // termasuk saat Gemini API Key belum diisi / gagal / balasannya tidak bisa diparse.
+        heuristicHighlightsFromTranscript(safeTranscript, topic, targetCount)
+    }
+
+    /**
+     * Fallback JUJUR untuk Step 5: bangun rekomendasi segmen LANGSUNG dari transkrip ASLI,
+     * tanpa memanggil AI dan tanpa mengarang contoh. Mem-parse baris berformat
+     * "[MM:SS] teks" atau "[H:MM:SS] teks" (dipakai oleh Clip Server maupun caption YouTube),
+     * lalu menyusun segmen 20-60 detik dari timestamp & kalimat yang benar-benar ada.
+     * Mengembalikan list kosong HANYA bila transkrip tidak punya timestamp yang bisa dibaca.
+     */
+    private fun heuristicHighlightsFromTranscript(
+        transcript: String,
+        topic: String,
+        targetCount: Int
+    ): List<PodcastSegmentHighlight> {
+        val cueSecs = mutableListOf<Int>()
+        val cueTexts = mutableListOf<String>()
+        for (rawLine in transcript.lines()) {
+            val line = rawLine.trim()
+            if (line.length < 4 || line[0] != '[') continue
+            if (line.startsWith("[CONTOH")) continue
+            val close = line.indexOf(']')
+            if (close <= 1) continue
+            val stamp = line.substring(1, close).trim()
+            val text = line.substring(close + 1).trim()
+            if (text.isEmpty()) continue
+            val sec = parseClockToSec(stamp) ?: continue
+            cueSecs.add(sec)
+            cueTexts.add(text)
+        }
+        if (cueSecs.size < 2) return emptyList()
+
+        val want = targetCount.coerceIn(3, 12)
+        val anchorCount = minOf(want, cueSecs.size)
+        val result = mutableListOf<PodcastSegmentHighlight>()
+        val usedStart = mutableSetOf<Int>()
+        for (k in 0 until anchorCount) {
+            val anchorIdx = ((cueSecs.size.toLong() * k) / anchorCount).toInt().coerceIn(0, cueSecs.size - 1)
+            val startSec = cueSecs[anchorIdx]
+            if (!usedStart.add(startSec)) continue
+            val minEnd = startSec + 20
+            val maxEnd = startSec + 60
+            val snippet = StringBuilder()
+            var endSec = startSec
+            var j = anchorIdx
+            while (j < cueSecs.size) {
+                val s = cueSecs[j]
+                if (s > maxEnd) break
+                if (snippet.length < 240) {
+                    if (snippet.isNotEmpty()) snippet.append(' ')
+                    snippet.append(cueTexts[j])
+                }
+                endSec = s
+                if (s >= minEnd && snippet.length >= 140) break
+                j++
+            }
+            if (endSec < minEnd) endSec = if (minEnd < maxEnd) minEnd else maxEnd
+            val snippetText = snippet.toString().trim()
+            val stopIdx = snippetText.indexOfFirst { it == '.' || it == '!' || it == '?' }
+            val firstSentence = if (stopIdx in 12..79) snippetText.substring(0, stopIdx).trim() else null
+            val baseTitle = (firstSentence ?: snippetText.take(60)).trim()
+            val title = if (baseTitle.isBlank()) "Segmen menarik " + (result.size + 1)
+                else baseTitle.replaceFirstChar { it.uppercase() }
+            val hook = if (snippetText.length > 90) snippetText.take(90).trim() + "..." else snippetText
+            result.add(
+                PodcastSegmentHighlight(
+                    startSec = startSec,
+                    endSec = endSec,
+                    durationFormatted = clockRange(startSec, endSec),
+                    title = title,
+                    hook = if (hook.isBlank()) "Cuplikan penting dari podcast." else hook,
+                    reasonWhyViral = "Diambil otomatis dari transkrip asli (timestamp & kalimat nyata, bukan dikarang).",
+                    transcriptSnippet = snippetText.take(240)
+                )
             )
-        )
+        }
+        return result
+    }
+
+    /** Parse "MM:SS" atau "H:MM:SS" menjadi total detik. Null bila format tidak valid. */
+    private fun parseClockToSec(stamp: String): Int? {
+        val parts = stamp.split(":")
+        if (parts.size < 2 || parts.size > 3) return null
+        val nums = ArrayList<Int>(parts.size)
+        for (p in parts) {
+            val n = p.trim().toIntOrNull() ?: return null
+            if (n < 0) return null
+            nums.add(n)
+        }
+        return when (nums.size) {
+            2 -> nums[0] * 60 + nums[1]
+            3 -> nums[0] * 3600 + nums[1] * 60 + nums[2]
+            else -> null
+        }
+    }
+
+    /** Format rentang waktu segmen, contoh: "00:45 - 01:35 (50 detik)". */
+    private fun clockRange(startSec: Int, endSec: Int): String {
+        fun fmt(t: Int): String {
+            val safe = if (t < 0) 0 else t
+            val h = safe / 3600
+            val m = (safe % 3600) / 60
+            val s = safe % 60
+            return if (h > 0) String.format("%d:%02d:%02d", h, m, s) else String.format("%02d:%02d", m, s)
+        }
+        val dur = (endSec - startSec).let { if (it < 1) 1 else it }
+        return fmt(startSec) + " - " + fmt(endSec) + " (" + dur + " detik)"
     }
 
     suspend fun generateVideoHooksAndCaptions(
