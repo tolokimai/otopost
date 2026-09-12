@@ -336,16 +336,20 @@ class GeminiService(private val getApiKey: () -> String) {
 
     suspend fun analyzePodcastTranscript(
         topic: String,
-        transcript: String
+        transcript: String,
+        maxSegments: Int = 6
     ): List<PodcastSegmentHighlight> = withContext(Dispatchers.IO) {
+        // Batasi panjang transkrip agar analisis tidak gagal/timeout untuk video panjang.
+        val safeTranscript = if (transcript.length > 14000) transcript.substring(0, 14000) else transcript
+        val targetCount = maxSegments.coerceIn(3, 12)
         val prompt = """
             Kamu adalah Video Editor & Content Strategist ahli Short-Form Viral Clips (TikTok, Reels, Shorts).
             Analisis transkrip podcast berikut tentang topik "$topic":
             
             Transkrip:
-            $transcript
+            $safeTranscript
             
-            Temukan 3 segmen klip terbaik berdurasi 30-60 detik yang punya potensi viral tertinggi (ada emosi, quote kuat, insight tidak terduga, atau debat seru).
+            Temukan sebanyak-banyaknya segmen klip terbaik (minimal 3, hingga $targetCount segmen) berdurasi 20-60 detik yang punya potensi viral tertinggi (ada emosi, quote kuat, insight tidak terduga, atau debat seru). Urutkan dari yang paling berpotensi viral. Jangan mengulang segmen yang mirip.
             
             Format JSON array:
             [

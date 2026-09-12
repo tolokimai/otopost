@@ -356,22 +356,22 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
     )
     val carouselSlides = _carouselSlides.asStateFlow()
 
-    private val _carouselBackgroundPreset = MutableStateFlow("INDIGO_GRADIENT") // INDIGO_GRADIENT, DARK_CYAN, WARM_SUNSET, SOLID_DARK
+    private val _carouselBackgroundPreset = MutableStateFlow("INDIGO_GRADIENT")
     val carouselBackgroundPreset = _carouselBackgroundPreset.asStateFlow()
 
-    private val _carouselTheme = MutableStateFlow("Minimalist Tech") // Minimalist Tech, Cyber Neon, Aesthetic Pastel, Dark Luxury, Vintage Retro, 3D Illustration
+    private val _carouselTheme = MutableStateFlow("Minimalist Tech")
     val carouselTheme = _carouselTheme.asStateFlow()
 
-    private val _carouselAspectRatio = MutableStateFlow("1:1") // 1:1, 4:5, 3:4, 9:16
+    private val _carouselAspectRatio = MutableStateFlow("1:1")
     val carouselAspectRatio = _carouselAspectRatio.asStateFlow()
 
-    private val _carouselTypographyStyle = MutableStateFlow("Modern Minimalist") // Modern Minimalist, Glassmorphism Card, Bold Hero, Editorial Serif, Bottom Scrim, Cyber Neon
+    private val _carouselTypographyStyle = MutableStateFlow("Modern Minimalist")
     val carouselTypographyStyle = _carouselTypographyStyle.asStateFlow()
 
     private val _carouselWatermark = MutableStateFlow("@AutoPostStudio")
     val carouselWatermark = _carouselWatermark.asStateFlow()
 
-    private val _carouselFontFamily = MutableStateFlow("Sans") // Sans, Serif, Monospace
+    private val _carouselFontFamily = MutableStateFlow("Sans")
     val carouselFontFamily = _carouselFontFamily.asStateFlow()
 
     // --- NEW: Full Carousel Design Model (WYSIWYG, manual + otomatis) ---
@@ -522,13 +522,11 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun setDesignAspectRatio(key: String) = updateDesign { it.copy(aspectRatio = key) }
-    // Tipografi = preset lengkap: begitu dipilih, model penulisan (case), efek art, spasi & font langsung diterapkan ke semua elemen.
     fun setDesignTypography(style: String) = updateDesign { it.copy(typographyStyle = style).withTypographyApplied() }
     fun setDesignBackgroundTheme(theme: String) = updateDesign { it.copy(backgroundTheme = theme) }
     fun setDesignFontFamily(family: String) = updateDesign { it.copy(fontFamily = family) }
     fun setDesignCtaText(text: String) = updateDesign { it.copy(ctaText = text) }
     fun setDesignCtaIcon(icon: String) = updateDesign { it.copy(ctaIcon = icon) }
-    // --- Indikator geser (swipe): teks, ikon emoji bawaan, atau ikon PNG upload; bisa ikon-saja / dimatikan ---
     fun toggleDesignSwipe() = updateDesign { it.copy(swipeEnabled = !it.swipeEnabled) }
     fun setDesignSwipeText(text: String) = updateDesign { it.copy(swipeText = text) }
     fun setDesignSwipeBuiltinIcon(icon: String) = updateDesign { it.copy(swipeIconBuiltin = icon, swipeIconBase64 = null) }
@@ -553,14 +551,10 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
     fun toggleDesignPageNumber() = updateDesign { it.copy(showPageNumber = !it.showPageNumber) }
     fun adjustDesignBaseFontScale(delta: Float) = updateDesign { it.copy(baseFontScale = (it.baseFontScale + delta).coerceIn(0.6f, 2.0f)) }
 
-    // Kolom prompt background AI (guard/sanitizer ada di AiImageService).
     fun setDesignAiPrompt(text: String) = updateDesign { it.copy(aiBackgroundPrompt = text) }
-    // Template layout: mengatur posisi seluruh elemen sekaligus, lalu re-apply tipografi.
     fun setDesignLayoutTemplate(name: String) = updateDesign { it.withLayoutTemplate(name).withTypographyApplied() }
-    // Kontrol per-elemen: model penulisan & efek art.
     fun setElementCase(role: SlideRole, element: CarouselElement, case: TextCase) = mutateElement(role, element) { it.copy(case = case) }
     fun setElementEffect(role: SlideRole, element: CarouselElement, effect: TextEffect) = mutateElement(role, element) { it.copy(effect = effect) }
-    // Warna kustom per-elemen (null = ikut warna teks global).
     fun setElementColor(role: SlideRole, element: CarouselElement, hex: String?) = mutateElement(role, element) { it.copy(colorHex = hex) }
 
     fun setWatermarkFromPersona() {
@@ -588,11 +582,9 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
     fun toggleElementUnderline(role: SlideRole, element: CarouselElement) = mutateElement(role, element) { it.copy(underline = !it.underline) }
     fun toggleElementVisible(role: SlideRole, element: CarouselElement) = mutateElement(role, element) { it.copy(visible = !it.visible) }
     fun adjustElementScale(role: SlideRole, element: CarouselElement, delta: Float) = mutateElement(role, element) { it.copy(fontScale = (it.fontScale + delta).coerceIn(0.4f, 3.0f)) }
-    // Set skala absolut (dipakai gesture cubit/pinch di editor kanvas WYSIWYG).
     fun setElementScale(role: SlideRole, element: CarouselElement, scale: Float) = mutateElement(role, element) { it.copy(fontScale = scale.coerceIn(0.4f, 3.0f)) }
     fun setElementAlign(role: SlideRole, element: CarouselElement, align: TextAlignH) = mutateElement(role, element) { it.copy(align = align) }
 
-    // Terapkan GAYA elemen (bukan posisi) ke elemen yang sama di semua peran (HOOK/ISI/CTA).
     fun applyElementStyleToAllRoles(fromRole: SlideRole, element: CarouselElement) {
         val source = _carouselDesign.value.elementIn(fromRole, element) ?: return
         updateDesign { d ->
@@ -635,7 +627,6 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
         showMessage("Desain ditetapkan sebagai default/favorit. Konten baru otomatis pakai gaya & posisi ini.")
     }
 
-    // --- Gaya carousel tersimpan bernama: simpan -> beri nama -> pakai ulang ---
     fun saveCurrentDesignAsStyle(name: String) {
         val n = name.trim()
         if (n.isBlank()) {
@@ -715,10 +706,9 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    // --- Galeri background upload: preview, dipakai ulang, hapus manual ---
     private fun addUploadedBackground(b64: String) {
         val list = _uploadedBackgrounds.value.toMutableList()
-        list.remove(b64) // hindari duplikat, taruh terbaru di depan
+        list.remove(b64)
         list.add(0, b64)
         while (list.size > 15) list.removeAt(list.size - 1)
         _uploadedBackgrounds.value = list
@@ -761,8 +751,6 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    // AI generate background sebagai "tools pintar": coba AI dulu; jika gagal/tidak tersedia
-    // otomatis fallback ke gambar internet (disimpan ke galeri), lalu ke galeri lokal tersimpan.
     fun generateBackgroundForSlide(index: Int) {
         viewModelScope.launch {
             val list = _carouselSlides.value.toMutableList()
@@ -815,19 +803,12 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    /**
-     * "Tools pintar" pemilih background: (1) coba generate AI, (2) jika gagal ambil gambar dari
-     * internet (dan simpan ke galeri lokal), (3) jika masih gagal pakai gambar galeri lokal tersimpan.
-     * Mengembalikan Pair(base64, labelSumber) atau null bila semua sumber gagal.
-     */
     private suspend fun smartBackground(headline: String, theme: String, ratio: String, prompt: String): Pair<String, String>? {
-        // 1) AI image generation
         val ai = repository.aiImageService.generateBackground(headline, theme, ratio, prompt)
         val aiB64 = ai.base64
         if (ai.isAiGenerated && !aiB64.isNullOrBlank()) {
             return Pair(aiB64, "AI " + (ai.modelUsed ?: ""))
         }
-        // 2) Gambar dari internet (lalu simpan ke galeri lokal)
         val query = buildImageQuery(headline, theme, prompt)
         val web = try {
             repository.imageSearchService.search(query, 12)
@@ -841,7 +822,6 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
                 return Pair(b64, "gambar internet (disimpan ke galeri)")
             }
         }
-        // 3) Galeri lokal tersimpan
         val local = _uploadedBackgrounds.value.firstOrNull { it.isNotBlank() }
         if (local != null) {
             return Pair(local, "galeri lokal")
@@ -849,7 +829,6 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
         return null
     }
 
-    /** Bangun kata kunci pencarian gambar (bahasa Inggris) dari prompt/tema untuk fallback. */
     private fun buildImageQuery(headline: String, theme: String, prompt: String): String {
         val p = prompt.trim()
         if (p.isNotBlank()) return p
@@ -864,9 +843,6 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    // ============================================================
-    // PENCARIAN GAMBAR INTERNET (keyword -> pilih -> jadi background)
-    // ============================================================
     fun searchBackgroundImages(query: String) {
         val q = query.trim()
         if (q.isBlank()) {
@@ -929,7 +905,6 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
         _imageSearchResults.value = emptyList()
     }
 
-    // Auto desain AI: mengatur SEMUA - tema, tipografi (case/efek/spasi), font, DAN posisi/layout - lalu buat background.
     fun autoDesignCarouselWithAi() {
         viewModelScope.launch {
             val niche = (defaultPersona.value?.niche ?: "").lowercase()
@@ -1011,7 +986,6 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
     private val _isCuttingClip = MutableStateFlow(false)
     val isCuttingClip = _isCuttingClip.asStateFlow()
 
-    // --- NEW: kandidat video hasil pencarian, unduhan file, & potongan tersimpan ---
     private val _podcastCandidates = MutableStateFlow<List<YouTubeCandidate>>(emptyList())
     val podcastCandidates = _podcastCandidates.asStateFlow()
 
@@ -1039,7 +1013,21 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
     private val _savedClips = MutableStateFlow<List<SavedPodcastClip>>(emptyList())
     val savedClips = _savedClips.asStateFlow()
 
-    // Sumber URL video podcast aktif (dipakai mode server: transkrip/download/potong).
+    // --- Subtitle burn-in (opsional, via Clip Server) ---
+    private val _subtitleEnabled = MutableStateFlow(false)
+    val subtitleEnabled = _subtitleEnabled.asStateFlow()
+
+    private val _subtitleStyle = MutableStateFlow("clean") // clean, bold, box, yellow
+    val subtitleStyle = _subtitleStyle.asStateFlow()
+
+    fun setSubtitleEnabled(enabled: Boolean) {
+        _subtitleEnabled.value = enabled
+    }
+
+    fun setSubtitleStyle(style: String) {
+        _subtitleStyle.value = style
+    }
+
     private var podcastSourceUrl: String = ""
 
     fun setStudioMetadata(title: String, hook: String, caption: String, hashtags: String) {
@@ -1050,11 +1038,6 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
         downloadAndTranscribeFullVideo(urlOrTopic)
     }
 
-    /**
-     * Cari 2-3 video YouTube relevan dari tema/rencana. Bila API key kosong atau tidak ada
-     * hasil relevan, beri sinyal agar user mengganti isi konten. Bila auto-pick aktif,
-     * mesin memilih kandidat terbaik (view terbanyak) otomatis.
-     */
     fun searchPodcastCandidates(theme: String) {
         viewModelScope.launch {
             _isSearchingPodcast.value = true
@@ -1090,7 +1073,6 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    /** Pilih kandidat (otomatis/manual), ambil transkrip, lalu minta AI rekomendasi segmen. */
     fun selectPodcastCandidate(candidate: YouTubeCandidate) {
         _selectedCandidate.value = candidate
         _downloadedVideoPath.value = null
@@ -1106,24 +1088,10 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
                 durationFormatted = candidate.durationFormatted
             )
             _podcastVideoInfo.value = info
-            _podcastFullTranscript.value = info.transcriptText
-
-            val transcription = repository.geminiService.transcribeAudioWithGemini(info.transcriptText, info.title)
-            _podcastTranscriptionResult.value = transcription
-            _podcastFullTranscript.value = transcription.fullText
-
-            val highlights = repository.geminiService.analyzePodcastTranscript(info.title, transcription.fullText)
-            _podcastHighlights.value = highlights
-            _selectedHighlightIndex.value = 0
-            if (highlights.isNotEmpty()) {
-                _clipStartSec.value = highlights[0].startSec
-                _clipEndSec.value = highlights[0].endSec
-                _studioContentHook.value = highlights[0].hook
-                _studioContentTitle.value = highlights[0].title
-            }
+            resolveTranscriptAndHighlights(info, applyMetadata = true)
             _isLoadingPodcast.value = false
             val src = if (info.isSample) "\u26a0\ufe0f transkrip CONTOH (server/caption tak tersedia)" else "transkrip ASLI"
-            showMessage("$src & rekomendasi segmen siap. " + clipActionHint())
+            showMessage("$src \u2022 ${_podcastHighlights.value.size} segmen rekomendasi AI siap. " + clipActionHint())
         }
     }
 
@@ -1137,7 +1105,6 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
         showMessage("Rasio default klip di-set ke $ratio.")
     }
 
-    /** Unduh video kandidat terpilih. Jika Clip Server terkonfigurasi, unduhan+potong ditangani server. */
     fun downloadSelectedVideo() {
         val candidate = _selectedCandidate.value
         if (candidate == null) {
@@ -1167,7 +1134,6 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    /** Potong satu segmen (berdasarkan rekomendasi AI) & simpan sebagai video. */
     fun cutSegmentAt(index: Int) {
         val highlight = _podcastHighlights.value.getOrNull(index) ?: return
         if (repository.clipServerService.isConfigured()) {
@@ -1200,7 +1166,6 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    /** Potong SEMUA segmen rekomendasi AI sekaligus & simpan masing-masing. */
     fun cutAllSegments() {
         val highlights = _podcastHighlights.value
         if (highlights.isEmpty()) {
@@ -1247,26 +1212,10 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
             podcastSourceUrl = if (looksLikeUrl(urlOrTopic)) urlOrTopic.trim()
                 else if (info.videoId.isNotBlank()) watchUrlFor(info.videoId) else ""
             _podcastVideoInfo.value = info
-            _podcastFullTranscript.value = info.transcriptText
-
-            // Transcribe with gemini-2.5-flash
-            val transcription = repository.geminiService.transcribeAudioWithGemini(info.transcriptText, info.title)
-            _podcastTranscriptionResult.value = transcription
-            _podcastFullTranscript.value = transcription.fullText
-
-            // Analyze highlights with Gemini AI
-            val highlights = repository.geminiService.analyzePodcastTranscript(info.title, transcription.fullText)
-            _podcastHighlights.value = highlights
-            _selectedHighlightIndex.value = 0
-            if (highlights.isNotEmpty()) {
-                _clipStartSec.value = highlights[0].startSec
-                _clipEndSec.value = highlights[0].endSec
-                _studioContentHook.value = highlights[0].hook
-                _studioContentTitle.value = highlights[0].title
-            }
+            resolveTranscriptAndHighlights(info, applyMetadata = true)
             _isLoadingPodcast.value = false
             val src = if (info.isSample) "\u26a0\ufe0f CONTOH" else "ASLI"
-            showMessage("Transkrip podcast ($src) dimuat & segmen viral diidentifikasi! " + clipActionHint())
+            showMessage("Transkrip podcast ($src) dimuat \u2022 ${_podcastHighlights.value.size} segmen viral diidentifikasi! " + clipActionHint())
         }
     }
 
@@ -1278,22 +1227,10 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
             podcastSourceUrl = if (looksLikeUrl(urlOrTopic)) urlOrTopic.trim()
                 else if (info.videoId.isNotBlank()) watchUrlFor(info.videoId) else ""
             _podcastVideoInfo.value = info
-            _podcastFullTranscript.value = info.transcriptText
-
-            val transcription = repository.geminiService.transcribeAudioWithGemini(info.transcriptText, info.title)
-            _podcastTranscriptionResult.value = transcription
-            _podcastFullTranscript.value = transcription.fullText
-
-            val highlights = repository.geminiService.analyzePodcastTranscript(info.title, transcription.fullText)
-            _podcastHighlights.value = highlights
-            _selectedHighlightIndex.value = 0
-            if (highlights.isNotEmpty()) {
-                _clipStartSec.value = highlights[0].startSec
-                _clipEndSec.value = highlights[0].endSec
-            }
+            resolveTranscriptAndHighlights(info, applyMetadata = false)
             _isDownloadingPodcast.value = false
             val src = if (info.isSample) "\u26a0\ufe0f CONTOH" else "ASLI"
-            showMessage("Video ditranskrip ($src)! Siap dipotong. " + clipActionHint())
+            showMessage("Video ditranskrip ($src) \u2022 ${_podcastHighlights.value.size} segmen siap dipotong. " + clipActionHint())
         }
     }
 
@@ -1328,7 +1265,6 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
             _isCuttingClip.value = true
             val path = _downloadedVideoPath.value
             if (path.isNullOrBlank()) {
-                // Tidak ada file terunduh: hanya set metadata (klip akan dipotong setelah unduh).
                 _isCuttingClip.value = false
                 showMessage("Rentang klip $startSec-$endSec detik disetel. Unduh video lalu tekan 'Potong & Simpan'.")
                 return@launch
@@ -1366,7 +1302,90 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
             "Tekan 'Potong Semua' \u2014 server akan unduh HD & memotong otomatis (reframe ke wajah)."
         else "Unduh video lalu potong per segmen."
 
-    /** Ambil transkrip: utamakan server (asli) bila terkonfigurasi & tersedia, jika tidak fallback on-device. */
+    /**
+     * Tentukan transkrip final & rekomendasi segmen. Bila transkrip ASLI tersedia (server/caption),
+     * pakai langsung tanpa 'menerjemahkan' ulang ke Gemini (yang bisa jadi teks contoh).
+     * Jumlah segmen mengikuti rekomendasi AI, dinamis sesuai durasi & panjang transkrip.
+     */
+    private suspend fun resolveTranscriptAndHighlights(info: YouTubeVideoInfo, applyMetadata: Boolean) {
+        val finalTranscript: String
+        if (!info.isSample && info.transcriptText.trim().isNotBlank()) {
+            finalTranscript = info.transcriptText
+            _podcastTranscriptionResult.value = null
+            _podcastFullTranscript.value = finalTranscript
+        } else {
+            val transcription = repository.geminiService.transcribeAudioWithGemini(info.transcriptText, info.title)
+            _podcastTranscriptionResult.value = transcription
+            finalTranscript = transcription.fullText
+            _podcastFullTranscript.value = finalTranscript
+        }
+
+        val maxSegments = recommendedSegmentCount(info.durationFormatted, finalTranscript)
+        val highlights = repository.geminiService.analyzePodcastTranscript(info.title, finalTranscript, maxSegments)
+        _podcastHighlights.value = highlights
+        _selectedHighlightIndex.value = 0
+        if (highlights.isNotEmpty()) {
+            _clipStartSec.value = highlights[0].startSec
+            _clipEndSec.value = highlights[0].endSec
+            if (applyMetadata) {
+                _studioContentHook.value = highlights[0].hook
+                _studioContentTitle.value = highlights[0].title
+            }
+        }
+    }
+
+    /** Perkiraan jumlah segmen ideal berdasarkan durasi video & panjang transkrip (3-10). */
+    private fun recommendedSegmentCount(durationFormatted: String, transcript: String): Int {
+        val totalSec = parseDurationToSeconds(durationFormatted)
+        val byDuration = when {
+            totalSec <= 0 -> 0
+            totalSec < 300 -> 3
+            totalSec < 900 -> 5
+            totalSec < 1800 -> 7
+            totalSec < 3600 -> 9
+            else -> 10
+        }
+        val byText = when {
+            transcript.length < 1500 -> 3
+            transcript.length < 4000 -> 5
+            transcript.length < 8000 -> 7
+            else -> 10
+        }
+        return maxOf(3, maxOf(byDuration, byText)).coerceAtMost(10)
+    }
+
+    /** Parse "HH:MM:SS" atau "MM:SS" menjadi detik. Return 0 bila tak dikenal. */
+    private fun parseDurationToSeconds(formatted: String): Int {
+        val t = formatted.trim()
+        if (t.isBlank()) return 0
+        val parts = t.split(":")
+        return try {
+            when (parts.size) {
+                3 -> parts[0].toInt() * 3600 + parts[1].toInt() * 60 + parts[2].toInt()
+                2 -> parts[0].toInt() * 60 + parts[1].toInt()
+                1 -> parts[0].toIntOrNull() ?: 0
+                else -> 0
+            }
+        } catch (e: Exception) {
+            0
+        }
+    }
+
+    /** Putar klip tersimpan (preview) memakai pemutar video sistem. */
+    fun playSavedClip(uriString: String) {
+        try {
+            val ctx = getApplication<Application>().applicationContext
+            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                setDataAndType(Uri.parse(uriString), "video/*")
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            ctx.startActivity(intent)
+        } catch (e: Exception) {
+            showMessage("Tidak bisa membuka pemutar video: ${e.localizedMessage ?: "error"}")
+        }
+    }
+
     private suspend fun fetchTranscriptSmart(
         videoUrl: String,
         videoId: String,
@@ -1396,7 +1415,6 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
         )
     }
 
-    /** Versi untuk input berupa URL/topik manual. */
     private suspend fun fetchTranscriptSmartForUrl(urlOrTopic: String): YouTubeVideoInfo {
         if (repository.clipServerService.isConfigured() && looksLikeUrl(urlOrTopic)) {
             val st = try {
@@ -1418,7 +1436,6 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
         return repository.youTubeTranscriptService.fetchVideoInfoAndTranscript(urlOrTopic)
     }
 
-    /** Minta server memotong daftar segmen, lalu unduh tiap clip ke galeri. */
     private fun serverCutSegments(segments: List<Triple<Int, Int, String>>) {
         val url = podcastSourceUrl.ifBlank {
             _selectedCandidate.value?.let { c -> c.url.ifBlank { watchUrlFor(c.videoId) } }
@@ -1435,14 +1452,17 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
         }
         viewModelScope.launch {
             _isCuttingClip.value = true
-            showMessage("\u2702\ufe0f Server mengunduh video HD & memotong ${segments.size} segmen (reframe ke wajah)...")
+            val subInfo = if (_subtitleEnabled.value) " + subtitle (${_subtitleStyle.value})" else ""
+            showMessage("\u2702\ufe0f Server mengunduh video HD & memotong ${segments.size} segmen (reframe ke wajah)$subInfo...")
             val ctx = getApplication<Application>().applicationContext
             val clips = try {
                 repository.clipServerService.requestClips(
                     videoUrl = url,
                     segments = segments,
                     aspectRatio = _clipAspectRatio.value,
-                    reframe = true
+                    reframe = true,
+                    subtitle = _subtitleEnabled.value,
+                    subtitleStyle = _subtitleStyle.value
                 )
             } catch (e: Exception) {
                 emptyList()
@@ -1510,10 +1530,10 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
     private val _aiVideoPrompt = MutableStateFlow("Cinematic drone shot of a futuristic creator studio with neon lighting, 4K smooth motion")
     val aiVideoPrompt = _aiVideoPrompt.asStateFlow()
 
-    private val _aiVideoAspectRatio = MutableStateFlow("9:16") // 9:16 or 16:9
+    private val _aiVideoAspectRatio = MutableStateFlow("9:16")
     val aiVideoAspectRatio = _aiVideoAspectRatio.asStateFlow()
 
-    private val _aiVideoStylePreset = MutableStateFlow("Cinematic 4K") // Cinematic 4K, Cyberpunk, 3D Animation, Photorealistic, Studio Minimal
+    private val _aiVideoStylePreset = MutableStateFlow("Cinematic 4K")
     val aiVideoStylePreset = _aiVideoStylePreset.asStateFlow()
     val aiVideoStyle = _aiVideoStylePreset.asStateFlow()
 
@@ -1521,7 +1541,7 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
     val aiVideoDurationSec = _aiVideoDurationSec.asStateFlow()
     val aiVideoDurationSeconds = _aiVideoDurationSec.asStateFlow()
 
-    private val _aiVideoCreationMode = MutableStateFlow("TEXT_TO_VIDEO") // TEXT_TO_VIDEO or IMAGE_TO_VIDEO
+    private val _aiVideoCreationMode = MutableStateFlow("TEXT_TO_VIDEO")
     val aiVideoCreationMode = _aiVideoCreationMode.asStateFlow()
 
     private val _aiVideoMotionPrompt = MutableStateFlow("Slow cinematic push-in with floating golden bokeh particles")
@@ -1611,7 +1631,6 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    // SAVE CONTENT TO SCHEDULED QUEUE / DRAFT
     fun saveCurrentStudioToSchedule(
         targetPlatforms: List<SocialPlatform>,
         scheduledTimeMillis: Long,
@@ -1691,7 +1710,6 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
     }
 
     init {
-        // Auto-seed sample persona if DB is empty
         viewModelScope.launch {
             val existing = repository.allPersonas.first()
             if (existing.isEmpty()) {

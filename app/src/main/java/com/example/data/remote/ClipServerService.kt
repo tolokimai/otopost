@@ -46,7 +46,7 @@ data class SavedVideoFile(
  * Klien untuk OtoPost Clip Server (yt-dlp + ffmpeg + OpenCV).
  *
  * baseUrl contoh: https://chat.agenthebat.com/handle
- * Semua pekerjaan berat (download HD, potong, reframe, transkrip) dilakukan di server;
+ * Semua pekerjaan berat (download HD, potong, reframe, transkrip, subtitle) dilakukan di server;
  * app hanya memanggil endpoint & mengunduh hasil clip.
  */
 class ClipServerService(
@@ -101,12 +101,16 @@ class ClipServerService(
     /**
      * Minta server mengunduh video HD lalu memotong tiap segmen (reframe 9:16 ke wajah).
      * segments: list Triple(startSec, endSec, title).
+     * subtitle: bila true, server membakar (burn-in) subtitle otomatis ke tiap clip.
+     * subtitleStyle: gaya subtitle (clean/bold/box/yellow).
      */
     suspend fun requestClips(
         videoUrl: String,
         segments: List<Triple<Int, Int, String>>,
         aspectRatio: String,
-        reframe: Boolean
+        reframe: Boolean,
+        subtitle: Boolean = false,
+        subtitleStyle: String = "clean"
     ): List<ServerClip> = withContext(Dispatchers.IO) {
         try {
             val segArr = JSONArray()
@@ -122,6 +126,8 @@ class ClipServerService(
                 .put("url", videoUrl)
                 .put("aspectRatio", aspectRatio)
                 .put("reframe", reframe)
+                .put("subtitle", subtitle)
+                .put("subtitleStyle", subtitleStyle)
                 .put("segments", segArr)
             val req = authed(base() + "/clips")
                 .post(payload.toString().toRequestBody(jsonType))

@@ -3,7 +3,7 @@ OtoPost Clip Server
 
 Semua pekerjaan berat pindah ke server (bukan di HP):
 - POST /transcript : ambil transkrip ASLI (subtitle manual/otomatis) via yt-dlp
-- POST /clips      : download video HD -> potong per-segmen -> reframe 9:16 ke wajah (ffmpeg + OpenCV)
+- POST /clips      : download video HD -> potong per-segmen -> reframe 9:16 ke wajah (ffmpeg + OpenCV) -> opsional burn-in subtitle
 - GET  /           : health check
 - GET  /files/...  : unduh hasil clip
 
@@ -27,7 +27,7 @@ CLIP_SERVER_TOKEN = os.environ.get("CLIP_SERVER_TOKEN", "")
 COOKIES_FILE = os.environ.get("YTDLP_COOKIES", "")
 os.makedirs(WORK_DIR, exist_ok=True)
 
-app = FastAPI(title="OtoPost Clip Server", version="1.0")
+app = FastAPI(title="OtoPost Clip Server", version="1.1")
 app.mount("/files", StaticFiles(directory=WORK_DIR), name="files")
 
 
@@ -204,6 +204,8 @@ class ClipsRequest(BaseModel):
     aspectRatio: Optional[str] = "9:16"
     reframe: Optional[bool] = True
     maxHeight: Optional[int] = 1080
+    subtitle: Optional[bool] = False
+    subtitleStyle: Optional[str] = "clean"
 
 
 def _download_source(url: str, tmp: str, max_h: int) -> str:
@@ -273,6 +275,122 @@ def _build_vf(src_w, src_h, aspect, reframe, face_cx):
     return "scale=-2:1080"
 
 
+# ---------------- Subtitle helpers ----------------
+def _srt_time(sec: float) -> str:
+    if sec < 0:
+        sec = 0.0
+    h = int(sec // 3600)
+    m = int((sec % 3600) // 60)
+    s = int(sec % 60)
+    ms = int(round((sec - int(sec)) * 1000))
+    if ms >= 1000:
+        ms = 999
+    return "%02d:%02d:%02d,%03d" % (h, m, s, ms)
+
+
+def _parse_vtt_cues(path: str):
+    with open(path, "r", encoding="utf-8", errors="ignore") as f:
+        content = f.read()
+    blocks = re.split(r"\n\n+", content)
+    ts_re = re.compile(
+        r"(\d{2}):(\d{2}):(\d{2})[.,](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[.,](\d{3})"
+    )
+    cues = []
+    for b in blocks:
+        m = ts_re.search(b)
+        if not m:
+            continue
+        h1, m1, s1, ms1, h2, m2, s2, ms2 = map(int, m.groups())
+        start = h1 * 3600 + m1 * 60 + s1 + ms1 / 1000.0
+        end = h2 * 3600 + m2 * 60 + s2 + ms2 / 1000.0
+        lines = [
+            l for l in b.splitlines()
+            if "-->" not in l and not l.strip().isdigit() and l.strip()
+            and not l.strip().startswith("WEBVTT") and not l.strip().startswith("Kind:")
+            and not l.strip().startswith("Language:")
+        ]
+        clean = re.sub(r"<[^>]+>", " ", " ".join(lines))
+        clean = re.sub(r"\s+", " ", clean).strip()
+        if clean:
+            cues.append({"start": round(start, 3), "end": round(end, 3), "text": clean})
+    # buang duplikat berurutan (umum di auto-subs)
+    dedup, prev = [], None
+    for c in cues:
+        if c["text"] != prev:
+            dedup.append(c)
+        prev = c["text"]
+    return dedup
+
+
+def _download_vtt_cues(url: str, tmp: str):
+    langs = ["id", "id-ID", "en", "en-US"]
+    sub_dir = os.path.join(tmp, "subs")
+    os.makedirs(sub_dir, exist_ok=True)
+    opts = _base_opts()
+    opts.update({
+        "skip_download": True,
+        "writesubtitles": True,
+        "writeautomaticsub": True,
+        "subtitleslangs": langs,
+        "subtitlesformat": "vtt",
+        "outtmpl": os.path.join(sub_dir, "%(id)s.%(ext)s"),
+    })
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            ydl.extract_info(url, download=True)
+    except Exception as e:
+        print("WARNING: subtitle download gagal:", str(e))
+    vtts = glob.glob(os.path.join(sub_dir, "*.vtt"))
+
+    def rank(p):
+        name = os.path.basename(p).lower()
+        for i, lg in enumerate(langs):
+            if ("." + lg.lower() + ".") in name:
+                return i
+        return len(langs) + 1
+
+    vtts.sort(key=rank)
+    if not vtts:
+        return []
+    return _parse_vtt_cues(vtts[0])
+
+
+def _write_window_srt(cues, win_start: float, win_end: float, srt_path: str) -> bool:
+    idx = 1
+    lines = []
+    for c in cues:
+        cs = float(c["start"])
+        ce = float(c["end"])
+        if ce <= win_start or cs >= win_end:
+            continue
+        rel_start = max(0.0, cs - win_start)
+        rel_end = min(win_end, ce) - win_start
+        if rel_end <= rel_start:
+            rel_end = rel_start + 0.5
+        lines.append(str(idx))
+        lines.append(_srt_time(rel_start) + " --> " + _srt_time(rel_end))
+        lines.append(c["text"])
+        lines.append("")
+        idx += 1
+    if not lines:
+        return False
+    with open(srt_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+    return True
+
+
+def _sub_style(style: str) -> str:
+    s = (style or "clean").lower()
+    if s == "bold":
+        return "FontName=Arial,Fontsize=22,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Shadow=1,Alignment=2,MarginV=60"
+    if s == "box":
+        return "FontName=Arial,Fontsize=18,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BackColour=&H90000000,BorderStyle=3,Outline=0,Shadow=0,Alignment=2,MarginV=60"
+    if s == "yellow":
+        return "FontName=Arial,Fontsize=20,Bold=1,PrimaryColour=&H0000FFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Shadow=1,Alignment=2,MarginV=60"
+    # clean (default)
+    return "FontName=Arial,Fontsize=18,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=0,Alignment=2,MarginV=60"
+
+
 @app.post("/clips")
 def clips(req: ClipsRequest, authorization: Optional[str] = Header(default=None)):
     _check_auth(authorization)
@@ -288,6 +406,17 @@ def clips(req: ClipsRequest, authorization: Optional[str] = Header(default=None)
     except Exception as e:
         raise HTTPException(status_code=502, detail="Gagal download: " + str(e))
     src_w, src_h = _probe_dim(src)
+
+    # Ambil cue subtitle sekali saja bila subtitle diminta.
+    cues = []
+    if req.subtitle:
+        try:
+            cues = _download_vtt_cues(req.url, tmp)
+        except Exception as e:
+            print("WARNING: gagal ambil subtitle:", str(e))
+            cues = []
+
+    style_str = _sub_style(req.subtitleStyle or "clean")
     results = []
     for idx, seg in enumerate(req.segments):
         start = max(0.0, float(seg.startSec))
@@ -297,14 +426,25 @@ def clips(req: ClipsRequest, authorization: Optional[str] = Header(default=None)
         mid = start + (end - start) / 2.0
         face_cx = _face_center_x(src, mid) if req.reframe else None
         vf = _build_vf(src_w, src_h, req.aspectRatio or "9:16", bool(req.reframe), face_cx)
+        subtitled = False
+        srt_name = "clip_" + str(idx + 1) + ".srt"
+        srt_path = os.path.join(tmp, srt_name)
+        if req.subtitle and cues:
+            try:
+                wrote = _write_window_srt(cues, start, end, srt_path)
+                if wrote:
+                    vf = vf + ",subtitles=" + srt_name + ":force_style='" + style_str + "'"
+                    subtitled = True
+            except Exception as e:
+                print("WARNING: gagal tulis srt:", str(e))
         out_name = "clip_" + str(idx + 1) + ".mp4"
         out_path = os.path.join(tmp, out_name)
         cmd = [
             "ffmpeg", "-y", "-ss", str(start), "-to", str(end), "-i", src,
             "-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
-            "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", out_path,
+            "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", out_name,
         ]
-        proc = subprocess.run(cmd, capture_output=True)
+        proc = subprocess.run(cmd, capture_output=True, cwd=tmp)
         if proc.returncode != 0 or not os.path.exists(out_path):
             continue
         results.append({
@@ -312,6 +452,7 @@ def clips(req: ClipsRequest, authorization: Optional[str] = Header(default=None)
             "title": seg.title or ("Clip " + str(idx + 1)),
             "startSec": start, "endSec": end,
             "reframed": face_cx is not None,
+            "subtitled": subtitled,
             "downloadUrl": _file_url(job + "/" + out_name),
         })
     if not results:
