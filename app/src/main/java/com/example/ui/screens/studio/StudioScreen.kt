@@ -275,10 +275,15 @@ fun PodcastClipStudioContent(viewModel: AutoPostViewModel) {
     val fullTranscript by viewModel.podcastFullTranscript.collectAsState()
     val appSettings by viewModel.settings.collectAsState()
     val serverReady = appSettings.clipServerUrl.isNotBlank()
+    val subtitleEnabled by viewModel.subtitleEnabled.collectAsState()
+    val subtitleStyle by viewModel.subtitleStyle.collectAsState()
 
     var themeInput by remember { mutableStateOf("") }
     var manualUrl by remember { mutableStateOf("") }
     var showFullTranscriptDialog by remember { mutableStateOf(false) }
+    var manualStartInput by remember { mutableStateOf("") }
+    var manualEndInput by remember { mutableStateOf("") }
+    var manualTitleInput by remember { mutableStateOf("") }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         // 1) CARI VIDEO DARI TEMA / RENCANA
@@ -466,6 +471,63 @@ fun PodcastClipStudioContent(viewModel: AutoPostViewModel) {
                 }
             }
 
+            // 3b) SUBTITLE OTOMATIS (opsional, burn-in via Clip Server)
+            Card(
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Subtitle Otomatis (burn-in)", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                "Bakar teks caption langsung ke video hasil potong. Butuh Clip Server & video bercaption.",
+                                fontSize = 10.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = subtitleEnabled,
+                            onCheckedChange = { viewModel.setSubtitleEnabled(it) },
+                            enabled = serverReady
+                        )
+                    }
+                    if (subtitleEnabled) {
+                        Text("Model / Gaya Subtitle:", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            items(
+                                listOf(
+                                    "clean" to "Clean",
+                                    "bold" to "Bold Putih",
+                                    "box" to "Kotak Hitam",
+                                    "yellow" to "Kuning Pop"
+                                )
+                            ) { pair ->
+                                FilterChip(
+                                    selected = subtitleStyle == pair.first,
+                                    onClick = { viewModel.setSubtitleStyle(pair.first) },
+                                    label = { Text(pair.second, fontSize = 11.sp) }
+                                )
+                            }
+                        }
+                    }
+                    if (!serverReady) {
+                        Text(
+                            "Subtitle otomatis hanya via Clip Server. Isi Clip Server URL di Settings untuk mengaktifkan.",
+                            fontSize = 10.sp,
+                            color = StatusFailed
+                        )
+                    }
+                }
+            }
+
             // 4) UNDUH VIDEO
             Card(
                 shape = RoundedCornerShape(12.dp),
@@ -524,6 +586,29 @@ fun PodcastClipStudioContent(viewModel: AutoPostViewModel) {
                 CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                 Spacer(Modifier.width(10.dp))
                 Text("Mengambil transkrip & menganalisis segmen viral...", fontSize = 13.sp)
+            }
+        }
+
+        // NASKAH TRANSKRIP LENGKAP (tampilkan semua transkrip dulu, baru tentukan)
+        if (fullTranscript.isNotBlank()) {
+            Card(
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(Icons.Default.Subject, contentDescription = null, tint = UtilityBlue400, modifier = Modifier.size(20.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Transkrip Lengkap Tersedia", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        Text("Lihat seluruh transkrip asli, lalu pakai rekomendasi AI atau potong manual.", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    OutlinedButton(onClick = { showFullTranscriptDialog = true }, shape = RoundedCornerShape(8.dp)) {
+                        Text("Lihat Naskah", fontSize = 11.sp)
+                    }
+                }
             }
         }
 
@@ -635,6 +720,62 @@ fun PodcastClipStudioContent(viewModel: AutoPostViewModel) {
             }
         }
 
+        // 5b) POTONG MANUAL (tentukan menit/detik sendiri)
+        if (selectedCandidate != null || videoInfo != null || downloadedPath != null) {
+            Card(
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text("Potong Manual (tentukan sendiri)", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    Text("Isi detik mulai & selesai, lalu potong satu klip khusus di luar rekomendasi AI.", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = manualStartInput,
+                            onValueChange = { v -> manualStartInput = v.filter { it.isDigit() } },
+                            label = { Text("Mulai (dtk)") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = manualEndInput,
+                            onValueChange = { v -> manualEndInput = v.filter { it.isDigit() } },
+                            label = { Text("Selesai (dtk)") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    OutlinedTextField(
+                        value = manualTitleInput,
+                        onValueChange = { manualTitleInput = it },
+                        label = { Text("Judul klip (opsional)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Button(
+                        onClick = {
+                            val s = manualStartInput.toIntOrNull() ?: 0
+                            val e = manualEndInput.toIntOrNull() ?: 0
+                            if (e > s) {
+                                viewModel.executeAiCutClip(s, e, manualTitleInput.ifBlank { null })
+                            }
+                        },
+                        enabled = (serverReady || downloadedPath != null) && !isCutting &&
+                            (manualEndInput.toIntOrNull() ?: 0) > (manualStartInput.toIntOrNull() ?: 0),
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Icon(Icons.Default.ContentCut, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Potong Klip Manual", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+
         // 6) KLIP TERSIMPAN
         if (savedClips.isNotEmpty()) {
             Text("Klip Tersimpan (${savedClips.size}) - folder Movies/AutoPostStudio:", fontSize = 14.sp, fontWeight = FontWeight.Bold)
@@ -654,6 +795,9 @@ fun PodcastClipStudioContent(viewModel: AutoPostViewModel) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(clip.title, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 Text("${clip.startSec}s - ${clip.endSec}s  \u2022  ${clip.displayName}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                            IconButton(onClick = { viewModel.playSavedClip(clip.uri) }, modifier = Modifier.size(34.dp)) {
+                                Icon(Icons.Default.PlayArrow, contentDescription = "Putar", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
                             }
                             Icon(Icons.Default.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
                         }
