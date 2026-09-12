@@ -36,7 +36,9 @@ data class AppSettings(
     val openverseClientSecret: String = "", // Openverse OAuth client_secret (opsional)
     val geminiImageModel: String = "", // Model gambar Gemini pilihan user (kosong = otomatis)
     val defaultClipAspectRatio: String = "9:16", // Rasio default hasil potong podcast: "9:16" atau "16:9"
-    val autoPickBestPodcast: Boolean = true // Jika true, mesin otomatis memilih video paling relevan
+    val autoPickBestPodcast: Boolean = true, // Jika true, mesin otomatis memilih video paling relevan
+    val clipServerUrl: String = "", // URL OtoPost Clip Server (transkrip asli + download HD + potong). Kosong = mode on-device.
+    val clipServerToken: String = "" // Token opsional untuk Clip Server (Authorization: Bearer)
 )
 
 /** Satu gaya carousel tersimpan yang bisa diberi nama & dipakai ulang. */
@@ -87,7 +89,9 @@ class SettingsManager(context: Context) {
             openverseClientSecret = prefs.getString("openverse_client_secret", "") ?: "",
             geminiImageModel = prefs.getString("gemini_image_model", "") ?: "",
             defaultClipAspectRatio = prefs.getString("default_clip_aspect_ratio", "9:16") ?: "9:16",
-            autoPickBestPodcast = prefs.getBoolean("auto_pick_best_podcast", true)
+            autoPickBestPodcast = prefs.getBoolean("auto_pick_best_podcast", true),
+            clipServerUrl = prefs.getString("clip_server_url", "") ?: "",
+            clipServerToken = prefs.getString("clip_server_token", "") ?: ""
         )
     }
 
@@ -119,6 +123,8 @@ class SettingsManager(context: Context) {
             putString("gemini_image_model", newSettings.geminiImageModel)
             putString("default_clip_aspect_ratio", newSettings.defaultClipAspectRatio)
             putBoolean("auto_pick_best_podcast", newSettings.autoPickBestPodcast)
+            putString("clip_server_url", newSettings.clipServerUrl)
+            putString("clip_server_token", newSettings.clipServerToken)
             apply()
         }
         _settings.value = newSettings

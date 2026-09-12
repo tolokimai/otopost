@@ -43,6 +43,8 @@ fun SettingsScreen(
     var openverseId by remember(currentSettings) { mutableStateOf(currentSettings.openverseClientId) }
     var openverseSecret by remember(currentSettings) { mutableStateOf(currentSettings.openverseClientSecret) }
     var geminiImageModel by remember(currentSettings) { mutableStateOf(currentSettings.geminiImageModel) }
+    var clipServerUrl by remember(currentSettings) { mutableStateOf(currentSettings.clipServerUrl) }
+    var clipServerToken by remember(currentSettings) { mutableStateOf(currentSettings.clipServerToken) }
 
     var isTikTokConnected by remember(currentSettings) { mutableStateOf(currentSettings.isTikTokConnected) }
     var isInstagramConnected by remember(currentSettings) { mutableStateOf(currentSettings.isInstagramConnected) }
@@ -275,6 +277,37 @@ fun SettingsScreen(
                         modifier = Modifier.fillMaxWidth()
                     )
 
+                    // --- Clip Server (Podcast: transkrip asli + download HD + potong + reframe wajah) ---
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            text = "Clip Server (Fitur Clip Podcast):",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        OutlinedTextField(
+                            value = clipServerUrl,
+                            onValueChange = { clipServerUrl = it },
+                            label = { Text("Clip Server URL (podcast)") },
+                            placeholder = { Text("https://chat.agenthebat.com/handle") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = clipServerToken,
+                            onValueChange = { clipServerToken = it },
+                            label = { Text("Clip Server Token (opsional)") },
+                            placeholder = { Text("kosongkan jika server tanpa token") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Text(
+                            text = "Isi URL OtoPost Clip Server agar transkrip ASLI, download video HD, & potong otomatis (reframe ke wajah) dikerjakan di server. Kosong = mode on-device (kurang andal).",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
                     // Diagnostic Test Result Banner
                     if (testResult != null) {
                         val (platform, result) = testResult!!
@@ -470,7 +503,9 @@ fun SettingsScreen(
                             autoRetryOnError = autoRetry,
                             openverseClientId = openverseId,
                             openverseClientSecret = openverseSecret,
-                            geminiImageModel = geminiImageModel
+                            geminiImageModel = geminiImageModel,
+                            clipServerUrl = clipServerUrl,
+                            clipServerToken = clipServerToken
                         )
                     )
                 },
@@ -591,7 +626,7 @@ fun ApiGuideDialog(onDismiss: () -> Unit) {
                         color = MaterialTheme.colorScheme.primary
                     )
                     Text(
-                        text = "• Teks: model Gemini terbaru (cepat & hemat kuota) untuk ide, caption, & transkrip.\n• Gambar: model bisa dipilih di atas (Gemini 2.5 Flash Image / Imagen 3). Jika satu model error 'no longer available' atau 404, ganti model atau biarkan Otomatis.\n• Biaya: tersedia tier gratis di aistudio.google.com. Fitur GAMBAR AI butuh API key dengan akses image generation, kadang perlu billing aktif.",
+                        text = "\u2022 Teks: model Gemini terbaru (cepat & hemat kuota) untuk ide, caption, & transkrip.\n\u2022 Gambar: model bisa dipilih di atas (Gemini 2.5 Flash Image / Imagen 3). Jika satu model error 'no longer available' atau 404, ganti model atau biarkan Otomatis.\n\u2022 Biaya: tersedia tier gratis di aistudio.google.com. Fitur GAMBAR AI butuh API key dengan akses image generation, kadang perlu billing aktif.",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -605,7 +640,7 @@ fun ApiGuideDialog(onDismiss: () -> Unit) {
                         color = MaterialTheme.colorScheme.primary
                     )
                     Text(
-                        text = "• Isi client_id & client_secret Openverse (daftar gratis di api.openverse.org) agar hasil pencarian lebih banyak & stabil.\n• Tanpa kredensial, pencarian tetap berjalan via Wikimedia Commons (gratis, tanpa key).",
+                        text = "\u2022 Isi client_id & client_secret Openverse (daftar gratis di api.openverse.org) agar hasil pencarian lebih banyak & stabil.\n\u2022 Tanpa kredensial, pencarian tetap berjalan via Wikimedia Commons (gratis, tanpa key).",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -619,7 +654,7 @@ fun ApiGuideDialog(onDismiss: () -> Unit) {
                         color = MaterialTheme.colorScheme.primary
                     )
                     Text(
-                        text = "• Endpoint: /v2/post/publish/video/init/\n• Approval: Membutuhkan verifikasi Developer App & persetujuan izin 'video.publish' & 'video.upload' dari TikTok for Developers.\n• Alternatif bila belum diapprove: Engine AutoPost Studio otomatis beralih ke Simulated Publisher dengan log riwayat posting lokal yang transparan.",
+                        text = "\u2022 Endpoint: /v2/post/publish/video/init/\n\u2022 Approval: Membutuhkan verifikasi Developer App & persetujuan izin 'video.publish' & 'video.upload' dari TikTok for Developers.\n\u2022 Alternatif bila belum diapprove: Engine AutoPost Studio otomatis beralih ke Simulated Publisher dengan log riwayat posting lokal yang transparan.",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -633,7 +668,7 @@ fun ApiGuideDialog(onDismiss: () -> Unit) {
                         color = MaterialTheme.colorScheme.primary
                     )
                     Text(
-                        text = "• Endpoint: graph.facebook.com/v19.0/{user_id}/media\n• Approval: Memerlukan Akun Instagram Professional (Business/Creator) yang terhubung ke Facebook Page serta App Review untuk permission 'instagram_content_publish'.",
+                        text = "\u2022 Endpoint: graph.facebook.com/v19.0/{user_id}/media\n\u2022 Approval: Memerlukan Akun Instagram Professional (Business/Creator) yang terhubung ke Facebook Page serta App Review untuk permission 'instagram_content_publish'.",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -647,7 +682,7 @@ fun ApiGuideDialog(onDismiss: () -> Unit) {
                         color = MaterialTheme.colorScheme.primary
                     )
                     Text(
-                        text = "• Endpoint: /youtube/v3/videos (Upload Shorts)\n• Kuota: 10,000 unit/hari gratis dari Google Cloud Console. 1 video upload membutuhkan ~1600 unit kuota.",
+                        text = "\u2022 Endpoint: /youtube/v3/videos (Upload Shorts)\n\u2022 Kuota: 10,000 unit/hari gratis dari Google Cloud Console. 1 video upload membutuhkan ~1600 unit kuota.",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

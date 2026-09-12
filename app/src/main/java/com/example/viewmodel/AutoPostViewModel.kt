@@ -1039,6 +1039,9 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
     private val _savedClips = MutableStateFlow<List<SavedPodcastClip>>(emptyList())
     val savedClips = _savedClips.asStateFlow()
 
+    // Sumber URL video podcast aktif (dipakai mode server: transkrip/download/potong).
+    private var podcastSourceUrl: String = ""
+
     fun setStudioMetadata(title: String, hook: String, caption: String, hashtags: String) {
         updateStudioCopy(title, hook, caption, hashtags)
     }
@@ -1092,13 +1095,15 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
         _selectedCandidate.value = candidate
         _downloadedVideoPath.value = null
         _savedClips.value = emptyList()
+        podcastSourceUrl = candidate.url.ifBlank { watchUrlFor(candidate.videoId) }
         viewModelScope.launch {
             _isLoadingPodcast.value = true
-            val info = repository.youTubeTranscriptService.fetchTranscriptForVideoId(
-                candidate.videoId,
-                candidate.title,
-                candidate.channelName,
-                candidate.durationFormatted
+            val info = fetchTranscriptSmart(
+                videoUrl = podcastSourceUrl,
+                videoId = candidate.videoId,
+                fallbackTitle = candidate.title,
+                fallbackChannel = candidate.channelName,
+                durationFormatted = candidate.durationFormatted
             )
             _podcastVideoInfo.value = info
             _podcastFullTranscript.value = info.transcriptText
@@ -1117,7 +1122,8 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
                 _studioContentTitle.value = highlights[0].title
             }
             _isLoadingPodcast.value = false
-            showMessage("Transkrip & rekomendasi segmen siap. Unduh video lalu potong per segmen.")
+            val src = if (info.isSample) "\u26a0\ufe0f transkrip CONTOH (server/caption tak tersedia)" else "transkrip ASLI"
+            showMessage("$src & rekomendasi segmen siap. " + clipActionHint())
         }
     }
 
@@ -1131,11 +1137,15 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
         showMessage("Rasio default klip di-set ke $ratio.")
     }
 
-    /** Unduh video kandidat terpilih (best-effort on-device). */
+    /** Unduh video kandidat terpilih. Jika Clip Server terkonfigurasi, unduhan+potong ditangani server. */
     fun downloadSelectedVideo() {
         val candidate = _selectedCandidate.value
         if (candidate == null) {
             showMessage("Pilih video dulu sebelum mengunduh.")
+            return
+        }
+        if (repository.clipServerService.isConfigured()) {
+            showMessage("Pakai server: tak perlu unduh manual. Langsung tekan 'Potong Semua' \u2014 server otomatis mengunduh HD & memotong.")
             return
         }
         viewModelScope.launch {
@@ -1152,19 +1162,24 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
                 showMessage("\u2705 Video terunduh (${result.qualityLabel}). Siap dipotong per segmen.")
             } else {
                 _downloadedVideoPath.value = null
-                showMessage("\u274c Unduh otomatis gagal (YouTube memblokir/berubah). Nanti kita siapkan jalur server/worker (yt-dlp) untuk unduhan andal.")
+                showMessage("\u274c Unduh otomatis gagal (YouTube memblokir/berubah). Isi Clip Server URL di Settings untuk unduhan andal via server.")
             }
         }
     }
 
     /** Potong satu segmen (berdasarkan rekomendasi AI) & simpan sebagai video. */
     fun cutSegmentAt(index: Int) {
+        val highlight = _podcastHighlights.value.getOrNull(index) ?: return
+        if (repository.clipServerService.isConfigured()) {
+            _selectedHighlightIndex.value = index
+            serverCutSegments(listOf(Triple(highlight.startSec, highlight.endSec, "clip_" + (index + 1) + "_" + highlight.title.take(24))))
+            return
+        }
         val path = _downloadedVideoPath.value
         if (path.isNullOrBlank()) {
             showMessage("Unduh videonya dulu sebelum memotong.")
             return
         }
-        val highlight = _podcastHighlights.value.getOrNull(index) ?: return
         viewModelScope.launch {
             _isCuttingClip.value = true
             _selectedHighlightIndex.value = index
@@ -1187,14 +1202,20 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
 
     /** Potong SEMUA segmen rekomendasi AI sekaligus & simpan masing-masing. */
     fun cutAllSegments() {
-        val path = _downloadedVideoPath.value
-        if (path.isNullOrBlank()) {
-            showMessage("Unduh videonya dulu sebelum memotong.")
-            return
-        }
         val highlights = _podcastHighlights.value
         if (highlights.isEmpty()) {
             showMessage("Belum ada rekomendasi segmen.")
+            return
+        }
+        if (repository.clipServerService.isConfigured()) {
+            serverCutSegments(highlights.mapIndexed { i, h ->
+                Triple(h.startSec, h.endSec, "clip_" + (i + 1) + "_" + h.title.take(24))
+            })
+            return
+        }
+        val path = _downloadedVideoPath.value
+        if (path.isNullOrBlank()) {
+            showMessage("Unduh videonya dulu sebelum memotong.")
             return
         }
         viewModelScope.launch {
@@ -1222,7 +1243,9 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
     fun loadPodcastForTopic(urlOrTopic: String) {
         viewModelScope.launch {
             _isLoadingPodcast.value = true
-            val info = repository.youTubeTranscriptService.fetchVideoInfoAndTranscript(urlOrTopic)
+            val info = fetchTranscriptSmartForUrl(urlOrTopic)
+            podcastSourceUrl = if (looksLikeUrl(urlOrTopic)) urlOrTopic.trim()
+                else if (info.videoId.isNotBlank()) watchUrlFor(info.videoId) else ""
             _podcastVideoInfo.value = info
             _podcastFullTranscript.value = info.transcriptText
 
@@ -1242,15 +1265,18 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
                 _studioContentTitle.value = highlights[0].title
             }
             _isLoadingPodcast.value = false
-            showMessage("Transkrip podcast dimuat & segmen viral diidentifikasi!")
+            val src = if (info.isSample) "\u26a0\ufe0f CONTOH" else "ASLI"
+            showMessage("Transkrip podcast ($src) dimuat & segmen viral diidentifikasi! " + clipActionHint())
         }
     }
 
     fun downloadAndTranscribeFullVideo(urlOrTopic: String) {
         viewModelScope.launch {
             _isDownloadingPodcast.value = true
-            showMessage("Mendownload audio video full & melakukan transkripsi via Gemini...")
-            val info = repository.youTubeTranscriptService.fetchVideoInfoAndTranscript(urlOrTopic)
+            showMessage("Mengambil transkrip & menganalisis video...")
+            val info = fetchTranscriptSmartForUrl(urlOrTopic)
+            podcastSourceUrl = if (looksLikeUrl(urlOrTopic)) urlOrTopic.trim()
+                else if (info.videoId.isNotBlank()) watchUrlFor(info.videoId) else ""
             _podcastVideoInfo.value = info
             _podcastFullTranscript.value = info.transcriptText
 
@@ -1266,7 +1292,8 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
                 _clipEndSec.value = highlights[0].endSec
             }
             _isDownloadingPodcast.value = false
-            showMessage("Video full berhasil ditranskrip! Siap untuk dipotong.")
+            val src = if (info.isSample) "\u26a0\ufe0f CONTOH" else "ASLI"
+            showMessage("Video ditranskrip ($src)! Siap dipotong. " + clipActionHint())
         }
     }
 
@@ -1287,13 +1314,18 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun executeAiCutClip(startSec: Int, endSec: Int, customTitle: String? = null) {
+        _clipStartSec.value = startSec
+        _clipEndSec.value = endSec
+        if (!customTitle.isNullOrBlank()) {
+            _studioContentTitle.value = customTitle
+        }
+        if (repository.clipServerService.isConfigured()) {
+            val title = _studioContentTitle.value.ifBlank { "clip_" + startSec + "_" + endSec }
+            serverCutSegments(listOf(Triple(startSec, endSec, title)))
+            return
+        }
         viewModelScope.launch {
             _isCuttingClip.value = true
-            _clipStartSec.value = startSec
-            _clipEndSec.value = endSec
-            if (!customTitle.isNullOrBlank()) {
-                _studioContentTitle.value = customTitle
-            }
             val path = _downloadedVideoPath.value
             if (path.isNullOrBlank()) {
                 // Tidak ada file terunduh: hanya set metadata (klip akan dipotong setelah unduh).
@@ -1315,6 +1347,123 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
             } else {
                 showMessage("\u274c Gagal memotong klip $startSec-$endSec detik.")
             }
+        }
+    }
+
+    // ============================================================
+    // HELPER MODE SERVER (Clip Server) untuk fitur podcast
+    // ============================================================
+    private fun watchUrlFor(videoId: String): String = "https://www.youtube.com/watch?v=" + videoId
+
+    private fun looksLikeUrl(s: String): Boolean {
+        val t = s.trim()
+        return t.startsWith("http://") || t.startsWith("https://") ||
+            t.contains("youtu.be/") || t.contains("youtube.com/")
+    }
+
+    private fun clipActionHint(): String =
+        if (repository.clipServerService.isConfigured())
+            "Tekan 'Potong Semua' \u2014 server akan unduh HD & memotong otomatis (reframe ke wajah)."
+        else "Unduh video lalu potong per segmen."
+
+    /** Ambil transkrip: utamakan server (asli) bila terkonfigurasi & tersedia, jika tidak fallback on-device. */
+    private suspend fun fetchTranscriptSmart(
+        videoUrl: String,
+        videoId: String,
+        fallbackTitle: String,
+        fallbackChannel: String,
+        durationFormatted: String
+    ): YouTubeVideoInfo {
+        if (repository.clipServerService.isConfigured() && videoUrl.isNotBlank()) {
+            val st = try {
+                repository.clipServerService.fetchTranscript(videoUrl)
+            } catch (e: Exception) {
+                null
+            }
+            if (st != null && st.hasTranscript && st.transcriptText.isNotBlank()) {
+                return YouTubeVideoInfo(
+                    videoId = videoId,
+                    title = st.title.ifBlank { fallbackTitle },
+                    channelName = st.channelName.ifBlank { fallbackChannel },
+                    durationFormatted = durationFormatted,
+                    transcriptText = st.transcriptText,
+                    isSample = false
+                )
+            }
+        }
+        return repository.youTubeTranscriptService.fetchTranscriptForVideoId(
+            videoId, fallbackTitle, fallbackChannel, durationFormatted
+        )
+    }
+
+    /** Versi untuk input berupa URL/topik manual. */
+    private suspend fun fetchTranscriptSmartForUrl(urlOrTopic: String): YouTubeVideoInfo {
+        if (repository.clipServerService.isConfigured() && looksLikeUrl(urlOrTopic)) {
+            val st = try {
+                repository.clipServerService.fetchTranscript(urlOrTopic.trim())
+            } catch (e: Exception) {
+                null
+            }
+            if (st != null && st.hasTranscript && st.transcriptText.isNotBlank()) {
+                return YouTubeVideoInfo(
+                    videoId = st.videoId,
+                    title = st.title.ifBlank { "Podcast" },
+                    channelName = st.channelName,
+                    durationFormatted = "",
+                    transcriptText = st.transcriptText,
+                    isSample = false
+                )
+            }
+        }
+        return repository.youTubeTranscriptService.fetchVideoInfoAndTranscript(urlOrTopic)
+    }
+
+    /** Minta server memotong daftar segmen, lalu unduh tiap clip ke galeri. */
+    private fun serverCutSegments(segments: List<Triple<Int, Int, String>>) {
+        val url = podcastSourceUrl.ifBlank {
+            _selectedCandidate.value?.let { c -> c.url.ifBlank { watchUrlFor(c.videoId) } }
+                ?: _podcastVideoInfo.value?.let { info -> if (info.videoId.isNotBlank()) watchUrlFor(info.videoId) else "" }
+                ?: ""
+        }
+        if (url.isBlank()) {
+            showMessage("Sumber video belum ada. Pilih video atau tempel link dulu.")
+            return
+        }
+        if (segments.isEmpty()) {
+            showMessage("Belum ada segmen untuk dipotong.")
+            return
+        }
+        viewModelScope.launch {
+            _isCuttingClip.value = true
+            showMessage("\u2702\ufe0f Server mengunduh video HD & memotong ${segments.size} segmen (reframe ke wajah)...")
+            val ctx = getApplication<Application>().applicationContext
+            val clips = try {
+                repository.clipServerService.requestClips(
+                    videoUrl = url,
+                    segments = segments,
+                    aspectRatio = _clipAspectRatio.value,
+                    reframe = true
+                )
+            } catch (e: Exception) {
+                emptyList()
+            }
+            if (clips.isEmpty()) {
+                _isCuttingClip.value = false
+                showMessage("\u274c Server gagal memotong. Cek Clip Server URL di Settings & log server (video mungkin butuh cookies).")
+                return@launch
+            }
+            var ok = 0
+            val saved = mutableListOf<SavedPodcastClip>()
+            for (c in clips) {
+                val f = repository.clipServerService.downloadClipToGallery(ctx, c.downloadUrl, c.title)
+                if (f != null) {
+                    ok++
+                    saved.add(SavedPodcastClip(c.title, f.uri, f.displayName, c.startSec, c.endSec))
+                }
+            }
+            _savedClips.value = _savedClips.value + saved
+            _isCuttingClip.value = false
+            showMessage("\u2705 $ok/${clips.size} klip dari server tersimpan di galeri (Movies/AutoPostStudio).")
         }
     }
 

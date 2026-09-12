@@ -7,6 +7,7 @@ import com.example.data.local.entity.*
 import com.example.data.preferences.AppSettings
 import com.example.data.preferences.SettingsManager
 import com.example.data.remote.AiImageService
+import com.example.data.remote.ClipServerService
 import com.example.data.remote.GeminiService
 import com.example.data.remote.ImageSearchService
 import com.example.data.remote.SocialMediaPublisher
@@ -20,7 +21,7 @@ import java.util.concurrent.TimeUnit
 /**
  * Repository pusat yang menyatukan sumber data lokal (Room), preferensi, dan
  * layanan remote (Gemini teks, generate gambar AI, pencarian gambar internet,
- * publisher sosial media, pencarian/unduh/transkrip YouTube).
+ * publisher sosial media, pencarian/unduh/transkrip YouTube, clip server).
  */
 class AutoPostRepository(
     private val context: Context,
@@ -61,6 +62,12 @@ class AutoPostRepository(
 
     // Pengunduh video YouTube on-device (best-effort).
     val youTubeDownloadService = YouTubeDownloadService()
+
+    // Klien OtoPost Clip Server (transkrip asli + download HD + potong + reframe wajah).
+    val clipServerService = ClipServerService(
+        getBaseUrl = { settingsManager.settings.value.clipServerUrl },
+        getToken = { settingsManager.settings.value.clipServerToken }
+    )
 
     // --- Personas ---
     val allPersonas: Flow<List<PersonaEntity>> = personaDao.getAllPersonas()
