@@ -90,45 +90,104 @@ def _parse_vtt(path: str):
 @app.post("/transcript")
 def transcript(req: TranscriptRequest, authorization: Optional[str] = Header(default=None)):
     _check_auth(authorization)
-    langs = req.langs or ["id", "id-ID", "en", "en-US"]
+
+    requested_langs = req.langs or ["id", "id-ID", "en", "en-US"]
+
     job = "t_" + uuid.uuid4().hex[:12]
     tmp = os.path.join(WORK_DIR, job)
     os.makedirs(tmp, exist_ok=True)
-    opts = _base_opts()
-    opts.update({
-        "skip_download": True,
-        "writesubtitles": True,
-        "writeautomaticsub": True,
-        "subtitleslangs": langs,
-        "subtitlesformat": "vtt",
-        "outtmpl": os.path.join(tmp, "%(id)s.%(ext)s"),
-    })
+
+    # Kelompokkan bahasa: prioritaskan Indonesia, lalu Inggris.
+    lang_groups = [
+        [lg for lg in requested_langs if lg.lower().startswith("id")],
+        [lg for lg in requested_langs if lg.lower().startswith("en")],
+    ]
+
+    # Buang group kosong
+    lang_groups = [g for g in lang_groups if g]
+
+    info = None
+    vtts = []
+
+    # Ambil metadata video terlebih dahulu.
     try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(req.url, download=True)
+        meta_opts = _base_opts()
+        meta_opts.update({
+            "skip_download": True,
+        })
+
+        with yt_dlp.YoutubeDL(meta_opts) as ydl:
+            info = ydl.extract_info(req.url, download=False)
+
     except Exception as e:
-        raise HTTPException(status_code=502, detail="Gagal ambil info video: " + str(e))
-    vtts = glob.glob(os.path.join(tmp, "*.vtt"))
+        raise HTTPException(
+            status_code=502,
+            detail="Gagal mengambil info video: " + str(e)
+        )
+
+    # Coba subtitle satu kelompok bahasa pada satu waktu.
+    for langs in lang_groups:
+        try:
+            opts = _base_opts()
+            opts.update({
+                "skip_download": True,
+                "writesubtitles": True,
+                "writeautomaticsub": True,
+                "subtitleslangs": langs,
+                "subtitlesformat": "vtt",
+                "outtmpl": os.path.join(tmp, "%(id)s.%(ext)s"),
+            })
+
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                ydl.extract_info(req.url, download=True)
+
+            vtts = glob.glob(os.path.join(tmp, "*.vtt"))
+
+            if vtts:
+                break
+
+        except Exception as e:
+            # Subtitle gagal/429 bukan berarti video gagal.
+            print(
+                "WARNING: subtitle gagal untuk",
+                langs,
+                ":",
+                str(e)
+            )
+            continue
 
     def rank(p):
         name = os.path.basename(p).lower()
-        for i, lg in enumerate(langs):
+
+        for i, lg in enumerate(requested_langs):
             if ("." + lg.lower() + ".") in name:
                 return i
-        return len(langs) + 1
+
+        return len(requested_langs) + 1
 
     vtts.sort(key=rank)
+
     if not vtts:
         return {
-            "videoId": info.get("id"), "title": info.get("title"),
-            "channelName": info.get("uploader"), "durationSec": info.get("duration"),
-            "hasTranscript": False, "transcriptText": "", "segments": [],
+            "videoId": info.get("id"),
+            "title": info.get("title"),
+            "channelName": info.get("uploader"),
+            "durationSec": info.get("duration"),
+            "hasTranscript": False,
+            "transcriptText": "",
+            "segments": [],
         }
+
     segs, full = _parse_vtt(vtts[0])
+
     return {
-        "videoId": info.get("id"), "title": info.get("title"),
-        "channelName": info.get("uploader"), "durationSec": info.get("duration"),
-        "hasTranscript": bool(full), "transcriptText": full, "segments": segs,
+        "videoId": info.get("id"),
+        "title": info.get("title"),
+        "channelName": info.get("uploader"),
+        "durationSec": info.get("duration"),
+        "hasTranscript": bool(full),
+        "transcriptText": full,
+        "segments": segs,
     }
 
 
