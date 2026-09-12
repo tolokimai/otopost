@@ -273,6 +273,8 @@ fun PodcastClipStudioContent(viewModel: AutoPostViewModel) {
     val savedClips by viewModel.savedClips.collectAsState()
     val isCutting by viewModel.isCuttingClip.collectAsState()
     val fullTranscript by viewModel.podcastFullTranscript.collectAsState()
+    val appSettings by viewModel.settings.collectAsState()
+    val serverReady = appSettings.clipServerUrl.isNotBlank()
 
     var themeInput by remember { mutableStateOf("") }
     var manualUrl by remember { mutableStateOf("") }
@@ -454,7 +456,10 @@ fun PodcastClipStudioContent(viewModel: AutoPostViewModel) {
                         }
                     }
                     Text(
-                        "Catatan: versi ini memotong video apa adanya (kualitas asli). Reframe otomatis ke potrait & fokus wajah pembicara sedang disiapkan (butuh proses berat / jalur server).",
+                        if (serverReady)
+                            "Server memotong video HD & otomatis reframe potrait fokus wajah (1 wajah). Active-speaker menyusul."
+                        else
+                            "Catatan: versi on-device memotong video apa adanya (kualitas asli). Reframe otomatis ke potrait & fokus wajah pembicara sedang disiapkan (butuh proses berat / jalur server).",
                         fontSize = 10.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -471,7 +476,12 @@ fun PodcastClipStudioContent(viewModel: AutoPostViewModel) {
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text("4. Unduh Video HD", fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                    if (isDownloading) {
+                    if (serverReady) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Icon(Icons.Default.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                            Text("Clip Server aktif \u2014 unduh HD & potong ditangani server. Lewati langkah ini, langsung ke 'Potong Semua Segmen' di bawah.", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
+                        }
+                    } else if (isDownloading) {
                         LinearProgressIndicator(
                             progress = { if (downloadProgress > 0f) downloadProgress else 0.02f },
                             modifier = Modifier.fillMaxWidth()
@@ -495,7 +505,7 @@ fun PodcastClipStudioContent(viewModel: AutoPostViewModel) {
                             }
                         } else {
                             Text(
-                                "Jika unduh otomatis gagal (YouTube berubah/blokir), nanti kita pakai jalur server (yt-dlp) yang lebih andal.",
+                                "Jika unduh otomatis gagal (YouTube berubah/blokir), isi Clip Server URL di Settings untuk jalur server (yt-dlp) yang lebih andal.",
                                 fontSize = 10.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -534,9 +544,17 @@ fun PodcastClipStudioContent(viewModel: AutoPostViewModel) {
                 }
             }
 
+            if (!serverReady && downloadedPath == null) {
+                Text(
+                    "Tip: aktifkan Clip Server di Settings agar bisa langsung memotong tanpa unduh manual, atau tekan 'Unduh Video' dulu.",
+                    fontSize = 10.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
             Button(
                 onClick = { viewModel.cutAllSegments() },
-                enabled = downloadedPath != null && !isCutting,
+                enabled = (serverReady || downloadedPath != null) && !isCutting,
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(10.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
@@ -587,7 +605,7 @@ fun PodcastClipStudioContent(viewModel: AutoPostViewModel) {
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Button(
                                     onClick = { viewModel.cutSegmentAt(index) },
-                                    enabled = downloadedPath != null && !isCutting,
+                                    enabled = (serverReady || downloadedPath != null) && !isCutting,
                                     modifier = Modifier.weight(1f),
                                     shape = RoundedCornerShape(8.dp)
                                 ) {
