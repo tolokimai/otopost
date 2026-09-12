@@ -7,6 +7,7 @@ import com.example.data.local.entity.*
 import com.example.data.preferences.AppSettings
 import com.example.data.preferences.SettingsManager
 import com.example.data.remote.AiImageService
+import com.example.data.remote.ClipContentService
 import com.example.data.remote.ClipServerService
 import com.example.data.remote.GeminiService
 import com.example.data.remote.ImageSearchService
@@ -35,6 +36,9 @@ class AutoPostRepository(
 
     // Layanan teks Gemini (persona, plan, caption, transkrip, dll).
     val geminiService = GeminiService { settingsManager.getEffectiveGeminiKey() }
+
+    // Generator konten per-clip podcast (hook, caption, hashtag, teks hook thumbnail).
+    val clipContentService = ClipContentService { settingsManager.getEffectiveGeminiKey() }
 
     // Layanan khusus generate GAMBAR via model image Gemini/Imagen (model bisa dipilih user).
     val aiImageService = AiImageService(
