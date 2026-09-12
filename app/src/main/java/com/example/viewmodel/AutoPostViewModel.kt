@@ -1039,6 +1039,21 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
     private val _savedClips = MutableStateFlow<List<SavedPodcastClip>>(emptyList())
     val savedClips = _savedClips.asStateFlow()
 
+    // --- Subtitle burn-in (opsional, via Clip Server) ---
+    private val _subtitleEnabled = MutableStateFlow(false)
+    val subtitleEnabled = _subtitleEnabled.asStateFlow()
+
+    private val _subtitleStyle = MutableStateFlow("clean") // clean, bold, box, yellow
+    val subtitleStyle = _subtitleStyle.asStateFlow()
+
+    fun setSubtitleEnabled(enabled: Boolean) {
+        _subtitleEnabled.value = enabled
+    }
+
+    fun setSubtitleStyle(style: String) {
+        _subtitleStyle.value = style
+    }
+
     // Sumber URL video podcast aktif (dipakai mode server: transkrip/download/potong).
     private var podcastSourceUrl: String = ""
 
@@ -1106,24 +1121,10 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
                 durationFormatted = candidate.durationFormatted
             )
             _podcastVideoInfo.value = info
-            _podcastFullTranscript.value = info.transcriptText
-
-            val transcription = repository.geminiService.transcribeAudioWithGemini(info.transcriptText, info.title)
-            _podcastTranscriptionResult.value = transcription
-            _podcastFullTranscript.value = transcription.fullText
-
-            val highlights = repository.geminiService.analyzePodcastTranscript(info.title, transcription.fullText)
-            _podcastHighlights.value = highlights
-            _selectedHighlightIndex.value = 0
-            if (highlights.isNotEmpty()) {
-                _clipStartSec.value = highlights[0].startSec
-                _clipEndSec.value = highlights[0].endSec
-                _studioContentHook.value = highlights[0].hook
-                _studioContentTitle.value = highlights[0].title
-            }
+            resolveTranscriptAndHighlights(info, applyMetadata = true)
             _isLoadingPodcast.value = false
             val src = if (info.isSample) "\u26a0\ufe0f transkrip CONTOH (server/caption tak tersedia)" else "transkrip ASLI"
-            showMessage("$src & rekomendasi segmen siap. " + clipActionHint())
+            showMessage("$src \u2022 ${_podcastHighlights.value.size} segmen rekomendasi AI siap. " + clipActionHint())
         }
     }
 
@@ -1247,26 +1248,10 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
             podcastSourceUrl = if (looksLikeUrl(urlOrTopic)) urlOrTopic.trim()
                 else if (info.videoId.isNotBlank()) watchUrlFor(info.videoId) else ""
             _podcastVideoInfo.value = info
-            _podcastFullTranscript.value = info.transcriptText
-
-            // Transcribe with gemini-2.5-flash
-            val transcription = repository.geminiService.transcribeAudioWithGemini(info.transcriptText, info.title)
-            _podcastTranscriptionResult.value = transcription
-            _podcastFullTranscript.value = transcription.fullText
-
-            // Analyze highlights with Gemini AI
-            val highlights = repository.geminiService.analyzePodcastTranscript(info.title, transcription.fullText)
-            _podcastHighlights.value = highlights
-            _selectedHighlightIndex.value = 0
-            if (highlights.isNotEmpty()) {
-                _clipStartSec.value = highlights[0].startSec
-                _clipEndSec.value = highlights[0].endSec
-                _studioContentHook.value = highlights[0].hook
-                _studioContentTitle.value = highlights[0].title
-            }
+            resolveTranscriptAndHighlights(info, applyMetadata = true)
             _isLoadingPodcast.value = false
             val src = if (info.isSample) "\u26a0\ufe0f CONTOH" else "ASLI"
-            showMessage("Transkrip podcast ($src) dimuat & segmen viral diidentifikasi! " + clipActionHint())
+            showMessage("Transkrip podcast ($src) dimuat \u2022 ${_podcastHighlights.value.size} segmen viral diidentifikasi! " + clipActionHint())
         }
     }
 
@@ -1278,22 +1263,10 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
             podcastSourceUrl = if (looksLikeUrl(urlOrTopic)) urlOrTopic.trim()
                 else if (info.videoId.isNotBlank()) watchUrlFor(info.videoId) else ""
             _podcastVideoInfo.value = info
-            _podcastFullTranscript.value = info.transcriptText
-
-            val transcription = repository.geminiService.transcribeAudioWithGemini(info.transcriptText, info.title)
-            _podcastTranscriptionResult.value = transcription
-            _podcastFullTranscript.value = transcription.fullText
-
-            val highlights = repository.geminiService.analyzePodcastTranscript(info.title, transcription.fullText)
-            _podcastHighlights.value = highlights
-            _selectedHighlightIndex.value = 0
-            if (highlights.isNotEmpty()) {
-                _clipStartSec.value = highlights[0].startSec
-                _clipEndSec.value = highlights[0].endSec
-            }
+            resolveTranscriptAndHighlights(info, applyMetadata = false)
             _isDownloadingPodcast.value = false
             val src = if (info.isSample) "\u26a0\ufe0f CONTOH" else "ASLI"
-            showMessage("Video ditranskrip ($src)! Siap dipotong. " + clipActionHint())
+            showMessage("Video ditranskrip ($src) \u2022 ${_podcastHighlights.value.size} segmen siap dipotong. " + clipActionHint())
         }
     }
 
@@ -1366,6 +1339,92 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
             "Tekan 'Potong Semua' \u2014 server akan unduh HD & memotong otomatis (reframe ke wajah)."
         else "Unduh video lalu potong per segmen."
 
+    /**
+     * Tentukan transkrip final & rekomendasi segmen. Bila transkrip ASLI tersedia (dari server/caption),
+     * pakai langsung tanpa 'menerjemahkan' ulang ke Gemini (yang bisa menghasilkan teks contoh).
+     * Jumlah segmen mengikuti rekomendasi AI, dinamis sesuai durasi & panjang transkrip.
+     */
+    private suspend fun resolveTranscriptAndHighlights(info: YouTubeVideoInfo, applyMetadata: Boolean) {
+        val finalTranscript: String
+        if (!info.isSample && info.transcriptText.trim().isNotBlank()) {
+            // Transkrip ASLI: tampilkan apa adanya di APK.
+            finalTranscript = info.transcriptText
+            _podcastTranscriptionResult.value = null
+            _podcastFullTranscript.value = finalTranscript
+        } else {
+            // Tidak ada transkrip asli: minta Gemini menyusun transkrip terstruktur.
+            val transcription = repository.geminiService.transcribeAudioWithGemini(info.transcriptText, info.title)
+            _podcastTranscriptionResult.value = transcription
+            finalTranscript = transcription.fullText
+            _podcastFullTranscript.value = finalTranscript
+        }
+
+        val maxSegments = recommendedSegmentCount(info.durationFormatted, finalTranscript)
+        val highlights = repository.geminiService.analyzePodcastTranscript(info.title, finalTranscript, maxSegments)
+        _podcastHighlights.value = highlights
+        _selectedHighlightIndex.value = 0
+        if (highlights.isNotEmpty()) {
+            _clipStartSec.value = highlights[0].startSec
+            _clipEndSec.value = highlights[0].endSec
+            if (applyMetadata) {
+                _studioContentHook.value = highlights[0].hook
+                _studioContentTitle.value = highlights[0].title
+            }
+        }
+    }
+
+    /** Perkiraan jumlah segmen ideal berdasarkan durasi video & panjang transkrip (3-10). */
+    private fun recommendedSegmentCount(durationFormatted: String, transcript: String): Int {
+        val totalSec = parseDurationToSeconds(durationFormatted)
+        val byDuration = when {
+            totalSec <= 0 -> 0
+            totalSec < 300 -> 3
+            totalSec < 900 -> 5
+            totalSec < 1800 -> 7
+            totalSec < 3600 -> 9
+            else -> 10
+        }
+        val byText = when {
+            transcript.length < 1500 -> 3
+            transcript.length < 4000 -> 5
+            transcript.length < 8000 -> 7
+            else -> 10
+        }
+        return maxOf(3, maxOf(byDuration, byText)).coerceAtMost(10)
+    }
+
+    /** Parse "HH:MM:SS" atau "MM:SS" menjadi detik. Return 0 bila tak dikenal. */
+    private fun parseDurationToSeconds(formatted: String): Int {
+        val t = formatted.trim()
+        if (t.isBlank()) return 0
+        val parts = t.split(":")
+        return try {
+            when (parts.size) {
+                3 -> parts[0].toInt() * 3600 + parts[1].toInt() * 60 + parts[2].toInt()
+                2 -> parts[0].toInt() * 60 + parts[1].toInt()
+                1 -> parts[0].toIntOrNull() ?: 0
+                else -> 0
+            }
+        } catch (e: Exception) {
+            0
+        }
+    }
+
+    /** Putar klip tersimpan (preview) memakai pemutar video sistem. */
+    fun playSavedClip(uriString: String) {
+        try {
+            val ctx = getApplication<Application>().applicationContext
+            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                setDataAndType(Uri.parse(uriString), "video/*")
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            ctx.startActivity(intent)
+        } catch (e: Exception) {
+            showMessage("Tidak bisa membuka pemutar video: ${e.localizedMessage ?: "error"}")
+        }
+    }
+
     /** Ambil transkrip: utamakan server (asli) bila terkonfigurasi & tersedia, jika tidak fallback on-device. */
     private suspend fun fetchTranscriptSmart(
         videoUrl: String,
@@ -1435,14 +1494,17 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
         }
         viewModelScope.launch {
             _isCuttingClip.value = true
-            showMessage("\u2702\ufe0f Server mengunduh video HD & memotong ${segments.size} segmen (reframe ke wajah)...")
+            val subInfo = if (_subtitleEnabled.value) " + subtitle (${_subtitleStyle.value})" else ""
+            showMessage("\u2702\ufe0f Server mengunduh video HD & memotong ${segments.size} segmen (reframe ke wajah)$subInfo...")
             val ctx = getApplication<Application>().applicationContext
             val clips = try {
                 repository.clipServerService.requestClips(
                     videoUrl = url,
                     segments = segments,
                     aspectRatio = _clipAspectRatio.value,
-                    reframe = true
+                    reframe = true,
+                    subtitle = _subtitleEnabled.value,
+                    subtitleStyle = _subtitleStyle.value
                 )
             } catch (e: Exception) {
                 emptyList()
@@ -1655,58 +1717,4 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
                     }
                     array.toString()
                 } else null,
-                podcastVideoUrl = podcastInfo?.videoId,
-                podcastSegmentStartSec = _clipStartSec.value,
-                podcastSegmentEndSec = _clipEndSec.value,
-                podcastChannelName = podcastInfo?.channelName ?: "",
-                subtitlesJson = when (format) {
-                    ContentFormat.SELF_VIDEO -> {
-                        val arr = org.json.JSONArray()
-                        _selfVideoSubtitles.value.forEach { arr.put(it) }
-                        arr.toString()
-                    }
-                    ContentFormat.AI_VIDEO -> {
-                        val arr = org.json.JSONArray()
-                        generatedVideo?.dynamicSubtitles?.forEach { arr.put(it) }
-                        arr.toString()
-                    }
-                    else -> null
-                },
-                generatedVideoUrl = when (format) {
-                    ContentFormat.AI_VIDEO -> generatedVideo?.videoUrl
-                    ContentFormat.PODCAST_CLIP -> _savedClips.value.lastOrNull()?.uri
-                    else -> null
-                },
-                videoAspectRatio = when (format) {
-                    ContentFormat.AI_VIDEO -> _aiVideoAspectRatio.value
-                    ContentFormat.PODCAST_CLIP -> _clipAspectRatio.value
-                    else -> "9:16"
-                }
-            )
-
-            repository.savePost(post)
-            showMessage(if (asDraft) "Konten disimpan sebagai Draft!" else "Konten berhasil dijadwalkan masuk antrean posting!")
-            selectTab(MainTab.Dashboard)
-        }
-    }
-
-    init {
-        // Auto-seed sample persona if DB is empty
-        viewModelScope.launch {
-            val existing = repository.allPersonas.first()
-            if (existing.isEmpty()) {
-                val samplePersona = PersonaEntity(
-                    brandName = "AutoPost Creator Hub",
-                    niche = "Tech, Bisnis & Produktivitas",
-                    targetAudience = "Kreator konten, solopreneur & freelancer muda",
-                    languageStyle = "Santai & Edukatif",
-                    tone = "Energetic & Praktis",
-                    language = "ID",
-                    accountReferences = "@garyvee, @feliciaputri, @cleocreative",
-                    isDefault = true
-                )
-                repository.savePersona(samplePersona)
-            }
-        }
-    }
-}
+                podcast
