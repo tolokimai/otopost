@@ -60,6 +60,9 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
     private val repository = (application as AutoPostApplication).repository
     val settingsManager = repository.settingsManager
 
+    // Kontroller fitur v2 Podcast Clip (multi-select, pemutar in-app, konten per-klip, thumbnail).
+    val podcastV2 = PodcastV2(viewModelScope, application.applicationContext, repository) { showMessage(it) }
+
     // --- Navigation & Tab State ---
     private val _currentTab = MutableStateFlow<MainTab>(MainTab.Dashboard)
     val currentTab: StateFlow<MainTab> = _currentTab.asStateFlow()
@@ -1017,7 +1020,7 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
     private val _subtitleEnabled = MutableStateFlow(false)
     val subtitleEnabled = _subtitleEnabled.asStateFlow()
 
-    private val _subtitleStyle = MutableStateFlow("clean") // clean, bold, box, yellow
+    private val _subtitleStyle = MutableStateFlow("clean") // clean, bold, box, yellow, tiktok, karaoke, minimal, highlight, neon, pop
     val subtitleStyle = _subtitleStyle.asStateFlow()
 
     fun setSubtitleEnabled(enabled: Boolean) {
@@ -1112,7 +1115,7 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
             return
         }
         if (repository.clipServerService.isConfigured()) {
-            showMessage("Pakai server: tak perlu unduh manual. Langsung tekan 'Potong Semua' \u2014 server otomatis mengunduh HD & memotong.")
+            showMessage("Pakai server: tak perlu unduh manual. Langsung tekan 'Potong' \u2014 server otomatis mengunduh HD & memotong.")
             return
         }
         viewModelScope.launch {
@@ -1156,9 +1159,9 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
             }
             _isCuttingClip.value = false
             if (result != null) {
-                _savedClips.value = _savedClips.value + SavedPodcastClip(
-                    highlight.title, result.uri, result.displayName, highlight.startSec, highlight.endSec
-                )
+                val newClip = SavedPodcastClip(highlight.title, result.uri, result.displayName, highlight.startSec, highlight.endSec)
+                _savedClips.value = _savedClips.value + newClip
+                podcastV2.generateThumbnails(listOf(newClip.uri))
                 showMessage("\u2705 Segmen ${index + 1} tersimpan: ${result.displayName}")
             } else {
                 showMessage("\u274c Gagal memotong segmen ${index + 1}.")
@@ -1200,8 +1203,56 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
                 }
             }
             _savedClips.value = _savedClips.value + newClips
+            podcastV2.generateThumbnails(newClips.map { it.uri })
             _isCuttingClip.value = false
             showMessage("\u2705 $ok/${highlights.size} segmen dipotong & disimpan (Movies/AutoPostStudio).")
+        }
+    }
+
+    /** Potong hanya segmen yang dicentang (v2). Server bila aktif, jika tidak fallback on-device. */
+    fun cutSelectedSegments() {
+        val highlights = _podcastHighlights.value
+        val sel = podcastV2.selectedSegmentIndices.value.sorted()
+        if (highlights.isEmpty()) {
+            showMessage("Belum ada rekomendasi segmen.")
+            return
+        }
+        if (sel.isEmpty()) {
+            showMessage("Centang minimal satu segmen dulu.")
+            return
+        }
+        val chosen = sel.mapNotNull { i -> highlights.getOrNull(i)?.let { h -> i to h } }
+        if (repository.clipServerService.isConfigured()) {
+            serverCutSegments(chosen.map { (i, h) ->
+                Triple(h.startSec, h.endSec, "clip_" + (i + 1) + "_" + h.title.take(24))
+            })
+            return
+        }
+        val path = _downloadedVideoPath.value
+        if (path.isNullOrBlank()) {
+            showMessage("Unduh videonya dulu sebelum memotong.")
+            return
+        }
+        viewModelScope.launch {
+            _isCuttingClip.value = true
+            showMessage("Memotong ${chosen.size} segmen terpilih...")
+            val ctx = getApplication<Application>().applicationContext
+            var ok = 0
+            val newClips = mutableListOf<SavedPodcastClip>()
+            for ((i, h) in chosen) {
+                val name = "clip_" + (i + 1) + "_" + h.title.take(24)
+                val result = withContext(Dispatchers.IO) {
+                    VideoClipper.cutSegment(ctx, path, h.startSec * 1000L, h.endSec * 1000L, name)
+                }
+                if (result != null) {
+                    ok++
+                    newClips.add(SavedPodcastClip(h.title, result.uri, result.displayName, h.startSec, h.endSec))
+                }
+            }
+            _savedClips.value = _savedClips.value + newClips
+            podcastV2.generateThumbnails(newClips.map { it.uri })
+            _isCuttingClip.value = false
+            showMessage("\u2705 $ok/${chosen.size} segmen terpilih dipotong & disimpan.")
         }
     }
 
@@ -1276,13 +1327,40 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
             }
             _isCuttingClip.value = false
             if (result != null) {
-                _savedClips.value = _savedClips.value + SavedPodcastClip(
-                    _studioContentTitle.value, result.uri, result.displayName, startSec, endSec
-                )
+                val newClip = SavedPodcastClip(_studioContentTitle.value, result.uri, result.displayName, startSec, endSec)
+                _savedClips.value = _savedClips.value + newClip
+                podcastV2.generateThumbnails(listOf(newClip.uri))
                 showMessage("\u2705 Klip $startSec-$endSec detik dipotong & disimpan: ${result.displayName}")
             } else {
                 showMessage("\u274c Gagal memotong klip $startSec-$endSec detik.")
             }
+        }
+    }
+
+    // ============================================================
+    // KONTEN PER-KLIP (AI) v2
+    // ============================================================
+    private fun snippetForClip(clip: SavedPodcastClip): String {
+        return _podcastHighlights.value.firstOrNull { it.startSec == clip.startSec && it.endSec == clip.endSec }?.transcriptSnippet
+            ?: _podcastHighlights.value.getOrNull(_selectedHighlightIndex.value)?.transcriptSnippet
+            ?: _podcastFullTranscript.value.take(600)
+    }
+
+    fun generateClipContent(clip: SavedPodcastClip) {
+        val topic = _podcastVideoInfo.value?.title ?: _studioContentTitle.value
+        podcastV2.generateClipContent(clip.uri, clip.title, snippetForClip(clip), topic)
+    }
+
+    fun generateContentForAllClips() {
+        val clips = _savedClips.value
+        if (clips.isEmpty()) {
+            showMessage("Belum ada klip tersimpan.")
+            return
+        }
+        val topic = _podcastVideoInfo.value?.title ?: _studioContentTitle.value
+        for (clip in clips) {
+            if (podcastV2.clipContents.value.containsKey(clip.uri)) continue
+            podcastV2.generateClipContent(clip.uri, clip.title, snippetForClip(clip), topic)
         }
     }
 
@@ -1299,13 +1377,12 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
 
     private fun clipActionHint(): String =
         if (repository.clipServerService.isConfigured())
-            "Tekan 'Potong Semua' \u2014 server akan unduh HD & memotong otomatis (reframe ke wajah)."
+            "Centang segmen lalu tekan 'Potong Terpilih' \u2014 server unduh HD & memotong otomatis (reframe ke wajah)."
         else "Unduh video lalu potong per segmen."
 
     /**
      * Tentukan transkrip final & rekomendasi segmen. Bila transkrip ASLI tersedia (server/caption),
-     * pakai langsung tanpa 'menerjemahkan' ulang ke Gemini (yang bisa jadi teks contoh).
-     * Jumlah segmen mengikuti rekomendasi AI, dinamis sesuai durasi & panjang transkrip.
+     * pakai langsung tanpa 'menerjemahkan' ulang ke Gemini. Jumlah segmen dinamis sesuai durasi & panjang transkrip.
      */
     private suspend fun resolveTranscriptAndHighlights(info: YouTubeVideoInfo, applyMetadata: Boolean) {
         val finalTranscript: String
@@ -1324,6 +1401,7 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
         val highlights = repository.geminiService.analyzePodcastTranscript(info.title, finalTranscript, maxSegments)
         _podcastHighlights.value = highlights
         _selectedHighlightIndex.value = 0
+        podcastV2.resetForNewVideo(highlights.size)
         if (highlights.isNotEmpty()) {
             _clipStartSec.value = highlights[0].startSec
             _clipEndSec.value = highlights[0].endSec
@@ -1371,19 +1449,9 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    /** Putar klip tersimpan (preview) memakai pemutar video sistem. */
+    /** Putar klip tersimpan (preview) memakai pemutar IN-APP (Media3), tanpa aplikasi eksternal. */
     fun playSavedClip(uriString: String) {
-        try {
-            val ctx = getApplication<Application>().applicationContext
-            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
-                setDataAndType(Uri.parse(uriString), "video/*")
-                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }
-            ctx.startActivity(intent)
-        } catch (e: Exception) {
-            showMessage("Tidak bisa membuka pemutar video: ${e.localizedMessage ?: "error"}")
-        }
+        podcastV2.playClipInApp(uriString)
     }
 
     private suspend fun fetchTranscriptSmart(
@@ -1453,7 +1521,7 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             _isCuttingClip.value = true
             val subInfo = if (_subtitleEnabled.value) " + subtitle (${_subtitleStyle.value})" else ""
-            showMessage("\u2702\ufe0f Server mengunduh video HD & memotong ${segments.size} segmen (reframe ke wajah)$subInfo...")
+            showMessage("\u2702\ufe0f Server mengunduh video HD & memotong ${segments.size} segmen (reframe ke wajah)$subInfo... Bisa beberapa menit, mohon tunggu.")
             val ctx = getApplication<Application>().applicationContext
             val clips = try {
                 repository.clipServerService.requestClips(
@@ -1482,6 +1550,7 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
                 }
             }
             _savedClips.value = _savedClips.value + saved
+            podcastV2.generateThumbnails(saved.map { it.uri })
             _isCuttingClip.value = false
             showMessage("\u2705 $ok/${clips.size} klip dari server tersimpan di galeri (Movies/AutoPostStudio).")
         }

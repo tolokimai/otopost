@@ -27,7 +27,7 @@ CLIP_SERVER_TOKEN = os.environ.get("CLIP_SERVER_TOKEN", "")
 COOKIES_FILE = os.environ.get("YTDLP_COOKIES", "")
 os.makedirs(WORK_DIR, exist_ok=True)
 
-app = FastAPI(title="OtoPost Clip Server", version="1.1")
+app = FastAPI(title="OtoPost Clip Server", version="1.2")
 app.mount("/files", StaticFiles(directory=WORK_DIR), name="files")
 
 
@@ -381,14 +381,19 @@ def _write_window_srt(cues, win_start: float, win_end: float, srt_path: str) -> 
 
 def _sub_style(style: str) -> str:
     s = (style or "clean").lower()
-    if s == "bold":
-        return "FontName=Arial,Fontsize=22,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Shadow=1,Alignment=2,MarginV=60"
-    if s == "box":
-        return "FontName=Arial,Fontsize=18,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BackColour=&H90000000,BorderStyle=3,Outline=0,Shadow=0,Alignment=2,MarginV=60"
-    if s == "yellow":
-        return "FontName=Arial,Fontsize=20,Bold=1,PrimaryColour=&H0000FFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Shadow=1,Alignment=2,MarginV=60"
-    # clean (default)
-    return "FontName=Arial,Fontsize=18,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=0,Alignment=2,MarginV=60"
+    styles = {
+        "clean": "FontName=Arial,Fontsize=18,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=0,Alignment=2,MarginV=60",
+        "bold": "FontName=Arial,Fontsize=22,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Shadow=1,Alignment=2,MarginV=60",
+        "box": "FontName=Arial,Fontsize=18,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BackColour=&H90000000,BorderStyle=3,Outline=0,Shadow=0,Alignment=2,MarginV=60",
+        "yellow": "FontName=Arial,Fontsize=20,Bold=1,PrimaryColour=&H0000FFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Shadow=1,Alignment=2,MarginV=60",
+        "tiktok": "FontName=Arial,Fontsize=24,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=4,Shadow=2,Alignment=2,MarginV=90",
+        "karaoke": "FontName=Arial,Fontsize=24,Bold=1,PrimaryColour=&H0000FFFF,SecondaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Shadow=1,Alignment=2,MarginV=80",
+        "minimal": "FontName=Arial,Fontsize=16,PrimaryColour=&H00FFFFFF,OutlineColour=&H80000000,BorderStyle=1,Outline=1,Shadow=0,Alignment=2,MarginV=50",
+        "highlight": "FontName=Arial,Fontsize=20,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BackColour=&HB0000000,BorderStyle=3,Outline=0,Shadow=0,Alignment=2,MarginV=70",
+        "neon": "FontName=Arial,Fontsize=22,Bold=1,PrimaryColour=&H00F0FF00,OutlineColour=&H00FF00AA,BorderStyle=1,Outline=3,Shadow=2,Alignment=2,MarginV=70",
+        "pop": "FontName=Arial,Fontsize=26,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=5,Shadow=2,Alignment=2,MarginV=90",
+    }
+    return styles.get(s, styles["clean"])
 
 
 @app.post("/clips")

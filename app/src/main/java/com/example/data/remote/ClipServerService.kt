@@ -53,11 +53,13 @@ class ClipServerService(
     private val getBaseUrl: () -> String,
     private val getToken: () -> String = { "" }
 ) {
+    // Timeout longgar: proses server (download HD + potong + reframe + subtitle) bisa lama.
     private val client = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.MINUTES)
-        .writeTimeout(5, TimeUnit.MINUTES)
+        .connectTimeout(60, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.MINUTES)
+        .writeTimeout(10, TimeUnit.MINUTES)
         .callTimeout(0, TimeUnit.MILLISECONDS)
+        .retryOnConnectionFailure(true)
         .build()
 
     private val jsonType = "application/json; charset=utf-8".toMediaType()
@@ -102,7 +104,7 @@ class ClipServerService(
      * Minta server mengunduh video HD lalu memotong tiap segmen (reframe 9:16 ke wajah).
      * segments: list Triple(startSec, endSec, title).
      * subtitle: bila true, server membakar (burn-in) subtitle otomatis ke tiap clip.
-     * subtitleStyle: gaya subtitle (clean/bold/box/yellow).
+     * subtitleStyle: gaya subtitle (clean/bold/box/yellow/karaoke/tiktok/minimal/highlight).
      */
     suspend fun requestClips(
         videoUrl: String,
@@ -152,6 +154,11 @@ class ClipServerService(
         } catch (e: Exception) {
             emptyList()
         }
+    }
+
+    /** Bentuk URL absolut untuk streaming/putar clip langsung di aplikasi. */
+    fun absoluteUrl(downloadUrl: String): String {
+        return if (downloadUrl.startsWith("http")) downloadUrl else (base() + downloadUrl)
     }
 
     /** Unduh satu clip dari server & simpan ke galeri (Movies/AutoPostStudio). */
