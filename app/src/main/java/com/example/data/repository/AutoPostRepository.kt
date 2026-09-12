@@ -57,7 +57,7 @@ class AutoPostRepository(
     val youTubeTranscriptService = YouTubeTranscriptService()
 
     // Pencarian video YouTube relevan berdasarkan tema (butuh YouTube Data API key).
-    val youTubeSearchService = YouTubeSearchService { settingsManager.settings.value.youTubeApiKey }
+    val youTubeSearchService = YouTubeSearchService(context) { settingsManager.settings.value.youTubeApiKey }
 
     // Pengunduh video YouTube on-device (best-effort).
     val youTubeDownloadService = YouTubeDownloadService()
