@@ -6,10 +6,10 @@ import com.example.data.local.AppDatabase
 import com.example.data.local.entity.*
 import com.example.data.preferences.AppSettings
 import com.example.data.preferences.SettingsManager
+import com.example.data.remote.AccurateGeminiService
 import com.example.data.remote.AiImageService
 import com.example.data.remote.ClipContentService
 import com.example.data.remote.ClipServerService
-import com.example.data.remote.GeminiService
 import com.example.data.remote.ImageSearchService
 import com.example.data.remote.SocialMediaPublisher
 import com.example.data.remote.YouTubeDownloadService
@@ -34,8 +34,9 @@ class AutoPostRepository(
     private val postDao = database.scheduledPostDao()
     private val logDao = database.postingLogDao()
 
-    // Layanan teks Gemini (persona, plan, caption, transkrip, dll).
-    val geminiService = GeminiService { settingsManager.getEffectiveGeminiKey() }
+    // Layanan teks Gemini. Analisis podcast memakai facade yang memproses seluruh transkrip
+    // per chunk dan menolak rekomendasi contoh/fiktif; fitur Gemini lain tetap didelegasikan.
+    val geminiService = AccurateGeminiService { settingsManager.getEffectiveGeminiKey() }
 
     // Generator konten per-clip podcast (hook, caption, hashtag, teks hook thumbnail).
     val clipContentService = ClipContentService { settingsManager.getEffectiveGeminiKey() }
