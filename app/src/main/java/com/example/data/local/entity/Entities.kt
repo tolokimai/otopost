@@ -7,7 +7,8 @@ enum class ContentFormat {
     CAROUSEL,
     PODCAST_CLIP,
     SELF_VIDEO,
-    AI_VIDEO
+    AI_VIDEO,
+    REMAKE
 }
 
 enum class SocialPlatform {

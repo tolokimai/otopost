@@ -100,7 +100,7 @@ fun ContentPlanScreen(
                     // Persona Selector
                     if (personas.isEmpty()) {
                         Text(
-                            text = "⚠️ Belum ada persona. Buat persona di menu 'Persona' terlebih dahulu.",
+                            text = "\u26a0\ufe0f Belum ada persona. Buat persona di menu 'Persona' terlebih dahulu.",
                             fontSize = 12.sp,
                             color = StatusFailed
                         )
@@ -369,22 +369,25 @@ fun ContentPlanItemCard(
                     color = when (item.format) {
                         ContentFormat.CAROUSEL -> UtilityBlue100
                         ContentFormat.PODCAST_CLIP -> YouTubeBg
+                        ContentFormat.REMAKE -> UtilityBlue100.copy(alpha = 0.6f)
                         ContentFormat.SELF_VIDEO -> Slate100
                         ContentFormat.AI_VIDEO -> UtilityBlue100.copy(alpha = 0.8f)
                     }
                 ) {
                     Text(
                         text = when (item.format) {
-                            ContentFormat.CAROUSEL -> "📑 CAROUSEL"
-                            ContentFormat.PODCAST_CLIP -> "🎙️ PODCAST CLIP"
-                            ContentFormat.SELF_VIDEO -> "🎬 VIDEO SENDIRI"
-                            ContentFormat.AI_VIDEO -> "✨ BUAT VIDEO (AI)"
+                            ContentFormat.CAROUSEL -> "\ud83d\udcd1 CAROUSEL"
+                            ContentFormat.PODCAST_CLIP -> "\ud83c\udf99\ufe0f PODCAST CLIP"
+                            ContentFormat.REMAKE -> "\ud83c\udf99\ufe0f REMAKE"
+                            ContentFormat.SELF_VIDEO -> "\ud83c\udfac VIDEO SENDIRI"
+                            ContentFormat.AI_VIDEO -> "\u2728 BUAT VIDEO (AI)"
                         },
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
                         color = when (item.format) {
                             ContentFormat.CAROUSEL -> UtilityBlue700
                             ContentFormat.PODCAST_CLIP -> YouTubeText
+                            ContentFormat.REMAKE -> UtilityBlue700
                             ContentFormat.SELF_VIDEO -> Slate700
                             ContentFormat.AI_VIDEO -> UtilityBlue700
                         },
@@ -408,7 +411,7 @@ fun ContentPlanItemCard(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(modifier = Modifier.padding(8.dp), verticalAlignment = Alignment.Top) {
-                    Text(text = "🔥 Hook: ", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                    Text(text = "\ud83d\udd25 Hook: ", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                     Text(text = item.hook, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface)
                 }
             }
@@ -505,9 +508,9 @@ fun PlanItemEditorDialog(
                         label = { Text("Podcast", fontSize = 11.sp) }
                     )
                     FilterChip(
-                        selected = format == ContentFormat.SELF_VIDEO,
-                        onClick = { format = ContentFormat.SELF_VIDEO },
-                        label = { Text("Video", fontSize = 11.sp) }
+                        selected = format == ContentFormat.REMAKE,
+                        onClick = { format = ContentFormat.REMAKE },
+                        label = { Text("Remake", fontSize = 11.sp) }
                     )
                 }
 
