@@ -37,14 +37,25 @@ data class AppSettings(
     val geminiImageModel: String = "", // Model gambar Gemini pilihan user (kosong = otomatis)
     val defaultClipAspectRatio: String = "9:16", // Rasio default hasil potong podcast: "9:16" atau "16:9"
     val autoPickBestPodcast: Boolean = true, // Jika true, mesin otomatis memilih video paling relevan
-    val clipServerUrl: String = "", // URL OtoPost Clip Server (transkrip asli + download HD + potong). Kosong = mode on-device.
-    val clipServerToken: String = "" // Token opsional untuk Clip Server (Authorization: Bearer)
+    val clipServerUrl: String = "", // URL OtoPost Clip Server (transkrip asli + download HD + potong + lipsync). Kosong = mode on-device.
+    val clipServerToken: String = "", // Token opsional untuk Clip Server (Authorization: Bearer)
+    val elevenLabsApiKey: String = "", // API key ElevenLabs untuk Text-to-Speech (fitur Remake Suara / Lipsync)
+    val elevenLabsVoiceId: String = "", // Voice ID ElevenLabs pilihan user (kosong = suara default multilingual)
+    val remakeMediaJson: String = "" // Galeri media (video/foto) untuk remake/lipsync (JSON array)
 )
 
 /** Satu gaya carousel tersimpan yang bisa diberi nama & dipakai ulang. */
 data class SavedCarouselStyle(
     val name: String,
     val design: CarouselDesign
+)
+
+/** Satu media (video/foto) di galeri remake yang bisa dipakai ulang & ditetapkan sebagai default. */
+data class RemakeMediaItem(
+    val uri: String,
+    val kind: String,        // "video" | "photo"
+    val name: String = "",
+    val isDefault: Boolean = false
 )
 
 class SettingsManager(context: Context) {
@@ -58,6 +69,14 @@ class SettingsManager(context: Context) {
         val geminiKey = prefs.getString("gemini_api_key", "")?.ifBlank {
             try {
                 BuildConfig.GEMINI_API_KEY
+            } catch (e: Exception) {
+                ""
+            }
+        } ?: ""
+
+        val elevenKey = prefs.getString("elevenlabs_api_key", "")?.ifBlank {
+            try {
+                BuildConfig.ELEVENLABS_API_KEY
             } catch (e: Exception) {
                 ""
             }
@@ -91,7 +110,10 @@ class SettingsManager(context: Context) {
             defaultClipAspectRatio = prefs.getString("default_clip_aspect_ratio", "9:16") ?: "9:16",
             autoPickBestPodcast = prefs.getBoolean("auto_pick_best_podcast", true),
             clipServerUrl = prefs.getString("clip_server_url", "") ?: "",
-            clipServerToken = prefs.getString("clip_server_token", "") ?: ""
+            clipServerToken = prefs.getString("clip_server_token", "") ?: "",
+            elevenLabsApiKey = elevenKey,
+            elevenLabsVoiceId = prefs.getString("elevenlabs_voice_id", "") ?: "",
+            remakeMediaJson = prefs.getString("remake_media_json", "") ?: ""
         )
     }
 
@@ -125,6 +147,9 @@ class SettingsManager(context: Context) {
             putBoolean("auto_pick_best_podcast", newSettings.autoPickBestPodcast)
             putString("clip_server_url", newSettings.clipServerUrl)
             putString("clip_server_token", newSettings.clipServerToken)
+            putString("elevenlabs_api_key", newSettings.elevenLabsApiKey)
+            putString("elevenlabs_voice_id", newSettings.elevenLabsVoiceId)
+            putString("remake_media_json", newSettings.remakeMediaJson)
             apply()
         }
         _settings.value = newSettings
@@ -139,6 +164,20 @@ class SettingsManager(context: Context) {
             ""
         }
     }
+
+    /** API key ElevenLabs efektif (Settings dulu, lalu fallback BuildConfig dari .env). */
+    fun getEffectiveElevenLabsKey(): String {
+        val customKey = _settings.value.elevenLabsApiKey
+        if (customKey.isNotBlank()) return customKey
+        return try {
+            BuildConfig.ELEVENLABS_API_KEY
+        } catch (e: Exception) {
+            ""
+        }
+    }
+
+    /** Voice ID ElevenLabs pilihan user (kosong = service memakai suara default multilingual). */
+    fun getEffectiveElevenLabsVoiceId(): String = _settings.value.elevenLabsVoiceId.trim()
 
     /** Model gambar Gemini pilihan user (kosong = biarkan service memakai urutan default). */
     fun getEffectiveGeminiImageModel(): String = _settings.value.geminiImageModel.trim()
@@ -176,6 +215,64 @@ class SettingsManager(context: Context) {
         val arr = JSONArray()
         list.forEach { arr.put(it) }
         updateSettings(_settings.value.copy(uploadedBackgroundsJson = arr.toString()))
+    }
+
+    // --- Galeri media remake/lipsync (video/foto, bisa dipakai ulang & ada default) ---
+    fun loadRemakeMedia(): List<RemakeMediaItem> {
+        val json = _settings.value.remakeMediaJson
+        if (json.isBlank()) return emptyList()
+        return try {
+            val arr = JSONArray(json)
+            (0 until arr.length()).mapNotNull { i ->
+                val o = arr.optJSONObject(i) ?: return@mapNotNull null
+                val uri = o.optString("uri")
+                if (uri.isNullOrBlank()) return@mapNotNull null
+                RemakeMediaItem(
+                    uri = uri,
+                    kind = o.optString("kind", "video").ifBlank { "video" },
+                    name = o.optString("name", ""),
+                    isDefault = o.optBoolean("isDefault", false)
+                )
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    fun saveRemakeMedia(list: List<RemakeMediaItem>) {
+        val arr = JSONArray()
+        list.forEach { m ->
+            arr.put(JSONObject().apply {
+                put("uri", m.uri)
+                put("kind", m.kind)
+                put("name", m.name)
+                put("isDefault", m.isDefault)
+            })
+        }
+        updateSettings(_settings.value.copy(remakeMediaJson = arr.toString()))
+    }
+
+    /** Tambahkan satu media ke galeri remake (menghindari duplikat uri). */
+    fun addRemakeMedia(item: RemakeMediaItem) {
+        val current = loadRemakeMedia().filter { it.uri != item.uri }
+        saveRemakeMedia(current + item)
+    }
+
+    /** Hapus satu media dari galeri remake berdasarkan uri. */
+    fun removeRemakeMedia(uri: String) {
+        saveRemakeMedia(loadRemakeMedia().filter { it.uri != uri })
+    }
+
+    /** Tetapkan satu media sebagai default (yang lain otomatis non-default). */
+    fun setDefaultRemakeMedia(uri: String) {
+        val updated = loadRemakeMedia().map { it.copy(isDefault = it.uri == uri) }
+        saveRemakeMedia(updated)
+    }
+
+    /** Ambil media default (atau item pertama bila belum ada yang ditetapkan). */
+    fun getDefaultRemakeMedia(): RemakeMediaItem? {
+        val list = loadRemakeMedia()
+        return list.firstOrNull { it.isDefault } ?: list.firstOrNull()
     }
 
     // --- Gaya carousel tersimpan bernama ---
