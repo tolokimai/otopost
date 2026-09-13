@@ -4,6 +4,8 @@ OtoPost Clip Server
 Semua pekerjaan berat pindah ke server (bukan di HP):
 - POST /transcript : ambil transkrip ASLI (subtitle manual/otomatis) via yt-dlp
 - POST /clips      : download video HD -> potong per-segmen -> reframe 9:16 ke wajah (ffmpeg + OpenCV) -> opsional burn-in subtitle
+- POST /upload     : upload media (video/foto/audio) untuk fitur Remake Suara/Lipsync (lihat remake.py)
+- POST /lipsync    : tempel suara baru ke media dengan aturan durasi (lihat remake.py)
 - GET  /           : health check
 - GET  /files/...  : unduh hasil clip
 
@@ -21,14 +23,17 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import yt_dlp
 
+from remake import router as remake_router
+
 WORK_DIR = os.environ.get("CLIP_WORK_DIR", "/data/clips")
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
 CLIP_SERVER_TOKEN = os.environ.get("CLIP_SERVER_TOKEN", "")
 COOKIES_FILE = os.environ.get("YTDLP_COOKIES", "")
 os.makedirs(WORK_DIR, exist_ok=True)
 
-app = FastAPI(title="OtoPost Clip Server", version="1.2")
+app = FastAPI(title="OtoPost Clip Server", version="1.3")
 app.mount("/files", StaticFiles(directory=WORK_DIR), name="files")
+app.include_router(remake_router)
 
 
 def _check_auth(authorization: Optional[str]):
