@@ -19,7 +19,6 @@ import androidx.compose.ui.unit.sp
 import com.example.ui.screens.contentplan.ContentPlanScreen
 import com.example.ui.screens.dashboard.DashboardScreen
 import com.example.ui.screens.persona.PersonaScreen
-import com.example.ui.screens.remake.RemakeVoiceScreen
 import com.example.ui.screens.settings.SettingsScreen
 import com.example.ui.screens.studio.StudioScreen
 import com.example.ui.theme.*
@@ -41,9 +40,6 @@ class MainActivity : ComponentActivity() {
 
             AutoPostStudioTheme(darkTheme = isDarkTheme) {
                 val currentTab by viewModel.currentTab.collectAsState()
-                // Tab "Remake" bukan bagian dari enum MainTab; dikelola lewat state lokal
-                // agar tidak perlu mengubah AutoPostViewModel yang besar.
-                var remakeActive by remember { mutableStateOf(false) }
                 val snackbarHostState = remember { SnackbarHostState() }
 
                 LaunchedEffect(Unit) {
@@ -72,11 +68,10 @@ class MainActivity : ComponentActivity() {
 
                             tabs.forEach { (tab, iconAndLabel) ->
                                 val (icon, label) = iconAndLabel
-                                val isSelected = !remakeActive && currentTab == tab
+                                val isSelected = currentTab == tab
                                 NavigationBarItem(
                                     selected = isSelected,
                                     onClick = {
-                                        remakeActive = false
                                         viewModel.selectTab(tab)
                                     },
                                     icon = {
@@ -103,34 +98,6 @@ class MainActivity : ComponentActivity() {
                                     modifier = Modifier.testTag("nav_tab_${tab.route}")
                                 )
                             }
-
-                            // Tab tambahan: Remake Suara / Lipsync
-                            NavigationBarItem(
-                                selected = remakeActive,
-                                onClick = { remakeActive = true },
-                                icon = {
-                                    Icon(
-                                        imageVector = Icons.Default.RecordVoiceOver,
-                                        contentDescription = "Remake",
-                                        modifier = Modifier.size(22.dp)
-                                    )
-                                },
-                                label = {
-                                    Text(
-                                        text = "Remake",
-                                        fontSize = 10.sp,
-                                        fontWeight = if (remakeActive) FontWeight.Bold else FontWeight.Medium
-                                    )
-                                },
-                                colors = NavigationBarItemDefaults.colors(
-                                    selectedIconColor = UtilityBlue700,
-                                    selectedTextColor = UtilityBlue700,
-                                    indicatorColor = UtilityBlue100,
-                                    unselectedIconColor = Slate400,
-                                    unselectedTextColor = Slate400
-                                ),
-                                modifier = Modifier.testTag("nav_tab_remake")
-                            )
                         }
                     }
                 ) { innerPadding ->
@@ -139,23 +106,19 @@ class MainActivity : ComponentActivity() {
                             .fillMaxSize()
                             .padding(innerPadding)
                     ) {
-                        if (remakeActive) {
-                            RemakeVoiceScreen()
-                        } else {
-                            AnimatedContent(
-                                targetState = currentTab,
-                                transitionSpec = {
-                                    fadeIn() togetherWith fadeOut()
-                                },
-                                label = "TabTransition"
-                            ) { targetTab ->
-                                when (targetTab) {
-                                    MainTab.Dashboard -> DashboardScreen(viewModel)
-                                    MainTab.Persona -> PersonaScreen(viewModel)
-                                    MainTab.ContentPlan -> ContentPlanScreen(viewModel)
-                                    MainTab.Studio -> StudioScreen(viewModel)
-                                    MainTab.Settings -> SettingsScreen(viewModel)
-                                }
+                        AnimatedContent(
+                            targetState = currentTab,
+                            transitionSpec = {
+                                fadeIn() togetherWith fadeOut()
+                            },
+                            label = "TabTransition"
+                        ) { targetTab ->
+                            when (targetTab) {
+                                MainTab.Dashboard -> DashboardScreen(viewModel)
+                                MainTab.Persona -> PersonaScreen(viewModel)
+                                MainTab.ContentPlan -> ContentPlanScreen(viewModel)
+                                MainTab.Studio -> StudioScreen(viewModel)
+                                MainTab.Settings -> SettingsScreen(viewModel)
                             }
                         }
                     }
