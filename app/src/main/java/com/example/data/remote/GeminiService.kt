@@ -396,78 +396,176 @@ class GeminiService(private val getApiKey: () -> String) {
 
     /**
      * Fallback JUJUR untuk Step 5: bangun rekomendasi segmen LANGSUNG dari transkrip ASLI,
-     * tanpa memanggil AI dan tanpa mengarang contoh. Mem-parse baris berformat
-     * "[MM:SS] teks" atau "[H:MM:SS] teks" (dipakai oleh Clip Server maupun caption YouTube),
-     * lalu menyusun segmen 20-60 detik dari timestamp & kalimat yang benar-benar ada.
-     * Mengembalikan list kosong HANYA bila transkrip tidak punya timestamp yang bisa dibaca.
+     * tanpa memanggil AI dan tanpa mengarang. Mendukung DUA bentuk transkrip:
+     *  1) Ada timestamp "[MM:SS]"/"[H:MM:SS]" (per-baris ATAU inline) -> pakai waktu asli.
+     *  2) Teks polos tanpa timestamp (mis. server balikin transcriptText tanpa segmen)
+     *     -> segmen disusun dari kalimat NYATA + estimasi waktu dari kecepatan bicara.
+     * Hanya mengembalikan list kosong bila transkrip benar-benar kosong / terlalu pendek.
      */
     private fun heuristicHighlightsFromTranscript(
         transcript: String,
         topic: String,
         targetCount: Int
     ): List<PodcastSegmentHighlight> {
-        val cueSecs = mutableListOf<Int>()
-        val cueTexts = mutableListOf<String>()
-        for (rawLine in transcript.lines()) {
-            val line = rawLine.trim()
-            if (line.length < 4 || line[0] != '[') continue
-            if (line.startsWith("[CONTOH")) continue
-            val close = line.indexOf(']')
-            if (close <= 1) continue
-            val stamp = line.substring(1, close).trim()
-            val text = line.substring(close + 1).trim()
-            if (text.isEmpty()) continue
-            val sec = parseClockToSec(stamp) ?: continue
-            cueSecs.add(sec)
-            cueTexts.add(text)
-        }
-        if (cueSecs.size < 2) return emptyList()
-
         val want = targetCount.coerceIn(3, 12)
-        val anchorCount = minOf(want, cueSecs.size)
+        val cues = parseTimestampCues(transcript)
+        if (cues.size >= 2) {
+            return buildHighlightsFromCues(cues, want)
+        }
+        return buildHighlightsFromPlainText(transcript, want)
+    }
+
+    /**
+     * Ambil daftar (detikMulai, teks) dari SEMUA penanda "[MM:SS]"/"[H:MM:SS]" di transkrip,
+     * baik per-baris maupun inline dalam satu blok. Penanda non-waktu seperti "[CONTOH ...]"
+     * otomatis terlewati karena gagal diparse jadi waktu. Tanpa regex.
+     */
+    private fun parseTimestampCues(transcript: String): List<Pair<Int, String>> {
+        val cues = mutableListOf<Pair<Int, String>>()
+        var i = 0
+        val n = transcript.length
+        while (i < n) {
+            val open = transcript.indexOf('[', i)
+            if (open < 0) break
+            val close = transcript.indexOf(']', open + 1)
+            if (close < 0) break
+            val inner = transcript.substring(open + 1, close).trim()
+            val sec = parseClockToSec(inner)
+            if (sec == null) {
+                i = close + 1
+                continue
+            }
+            val nextOpen = transcript.indexOf('[', close + 1)
+            val end = if (nextOpen < 0) n else nextOpen
+            val text = transcript.substring(close + 1, end).trim()
+            if (text.isNotEmpty()) cues.add(Pair(sec, text))
+            i = end
+        }
+        return cues
+    }
+
+    private fun buildHighlightsFromCues(
+        cues: List<Pair<Int, String>>,
+        want: Int
+    ): List<PodcastSegmentHighlight> {
+        val anchorCount = minOf(want, cues.size)
         val result = mutableListOf<PodcastSegmentHighlight>()
         val usedStart = mutableSetOf<Int>()
         for (k in 0 until anchorCount) {
-            val anchorIdx = ((cueSecs.size.toLong() * k) / anchorCount).toInt().coerceIn(0, cueSecs.size - 1)
-            val startSec = cueSecs[anchorIdx]
+            val anchorIdx = ((cues.size.toLong() * k) / anchorCount).toInt().coerceIn(0, cues.size - 1)
+            val startSec = cues[anchorIdx].first
             if (!usedStart.add(startSec)) continue
             val minEnd = startSec + 20
             val maxEnd = startSec + 60
             val snippet = StringBuilder()
             var endSec = startSec
             var j = anchorIdx
-            while (j < cueSecs.size) {
-                val s = cueSecs[j]
+            while (j < cues.size) {
+                val s = cues[j].first
                 if (s > maxEnd) break
                 if (snippet.length < 240) {
                     if (snippet.isNotEmpty()) snippet.append(' ')
-                    snippet.append(cueTexts[j])
+                    snippet.append(cues[j].second)
                 }
                 endSec = s
                 if (s >= minEnd && snippet.length >= 140) break
                 j++
             }
             if (endSec < minEnd) endSec = if (minEnd < maxEnd) minEnd else maxEnd
-            val snippetText = snippet.toString().trim()
-            val stopIdx = snippetText.indexOfFirst { it == '.' || it == '!' || it == '?' }
-            val firstSentence = if (stopIdx in 12..79) snippetText.substring(0, stopIdx).trim() else null
-            val baseTitle = (firstSentence ?: snippetText.take(60)).trim()
-            val title = if (baseTitle.isBlank()) "Segmen menarik " + (result.size + 1)
-                else baseTitle.replaceFirstChar { it.uppercase() }
-            val hook = if (snippetText.length > 90) snippetText.take(90).trim() + "..." else snippetText
-            result.add(
-                PodcastSegmentHighlight(
-                    startSec = startSec,
-                    endSec = endSec,
-                    durationFormatted = clockRange(startSec, endSec),
-                    title = title,
-                    hook = if (hook.isBlank()) "Cuplikan penting dari podcast." else hook,
-                    reasonWhyViral = "Diambil otomatis dari transkrip asli (timestamp & kalimat nyata, bukan dikarang).",
-                    transcriptSnippet = snippetText.take(240)
-                )
-            )
+            result.add(makeHighlight(startSec, endSec, snippet.toString().trim(), result.size, true))
         }
         return result
+    }
+
+    /**
+     * Transkrip tanpa timestamp: pecah jadi kalimat NYATA, kelompokkan jadi beberapa segmen,
+     * dan ESTIMASI waktu dari kecepatan bicara (~2.5 kata/detik). Teks 100% dari transkrip;
+     * hanya penanda detik yang diperkirakan (ditandai jujur pada alasannya).
+     */
+    private fun buildHighlightsFromPlainText(
+        transcript: String,
+        want: Int
+    ): List<PodcastSegmentHighlight> {
+        val sentences = splitIntoSentences(transcript)
+        if (sentences.isEmpty()) return emptyList()
+        val wordsPerSec = 2.5
+        val starts = IntArray(sentences.size)
+        var cumWords = 0
+        for (idx in sentences.indices) {
+            starts[idx] = (cumWords / wordsPerSec).toInt()
+            cumWords += sentences[idx].trim().split(' ').count { it.isNotBlank() }
+        }
+        val segCount = minOf(want, sentences.size).coerceAtLeast(1)
+        val result = mutableListOf<PodcastSegmentHighlight>()
+        val usedStart = mutableSetOf<Int>()
+        for (k in 0 until segCount) {
+            val fromIdx = ((sentences.size.toLong() * k) / segCount).toInt().coerceIn(0, sentences.size - 1)
+            val startSec = starts[fromIdx]
+            if (!usedStart.add(startSec)) continue
+            val snippet = StringBuilder()
+            var idx = fromIdx
+            var endSec = startSec
+            while (idx < sentences.size) {
+                if (snippet.length >= 240) break
+                if (snippet.isNotEmpty()) snippet.append(' ')
+                snippet.append(sentences[idx].trim())
+                endSec = if (idx + 1 < sentences.size) starts[idx + 1] else startSec + 40
+                if (endSec - startSec >= 40 && snippet.length >= 140) break
+                idx++
+            }
+            var s = startSec
+            var e = endSec
+            if (e - s < 20) e = s + 20
+            if (e - s > 60) e = s + 60
+            result.add(makeHighlight(s, e, snippet.toString().trim(), result.size, false))
+        }
+        return result
+    }
+
+    /** Pecah teks jadi kalimat berdasarkan tanda . ! ? (tanpa regex). */
+    private fun splitIntoSentences(text: String): List<String> {
+        val flat = text.replace('\n', ' ')
+        val out = mutableListOf<String>()
+        val sb = StringBuilder()
+        for (c in flat) {
+            sb.append(c)
+            if (c == '.' || c == '!' || c == '?') {
+                val piece = sb.toString().trim()
+                if (piece.length >= 8) out.add(piece)
+                sb.setLength(0)
+            }
+        }
+        val tail = sb.toString().trim()
+        if (tail.length >= 8) out.add(tail)
+        return out
+    }
+
+    private fun makeHighlight(
+        startSec: Int,
+        endSec: Int,
+        snippetText: String,
+        indexSoFar: Int,
+        fromTimestamps: Boolean
+    ): PodcastSegmentHighlight {
+        val stopIdx = snippetText.indexOfFirst { it == '.' || it == '!' || it == '?' }
+        val firstSentence = if (stopIdx in 12..79) snippetText.substring(0, stopIdx).trim() else null
+        val baseTitle = (firstSentence ?: snippetText.take(60)).trim()
+        val title = if (baseTitle.isBlank()) "Segmen menarik " + (indexSoFar + 1)
+            else baseTitle.replaceFirstChar { it.uppercase() }
+        val hook = if (snippetText.length > 90) snippetText.take(90).trim() + "..." else snippetText
+        val reason = if (fromTimestamps)
+            "Diambil otomatis dari transkrip asli (timestamp & kalimat nyata, bukan dikarang)."
+        else
+            "Diambil dari kalimat asli transkrip; detik diperkirakan dari kecepatan bicara (sesuaikan bila perlu)."
+        return PodcastSegmentHighlight(
+            startSec = startSec,
+            endSec = endSec,
+            durationFormatted = clockRange(startSec, endSec),
+            title = title,
+            hook = if (hook.isBlank()) "Cuplikan penting dari podcast." else hook,
+            reasonWhyViral = reason,
+            transcriptSnippet = snippetText.take(240)
+        )
     }
 
     /** Parse "MM:SS" atau "H:MM:SS" menjadi total detik. Null bila format tidak valid. */
