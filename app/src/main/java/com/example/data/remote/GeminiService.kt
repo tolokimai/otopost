@@ -198,18 +198,23 @@ class GeminiService(private val getApiKey: () -> String) {
             - Bahasa: ${persona.language}
             - Tema Besar: $theme
             
+            Hanya gunakan 3 format berikut:
+            - CAROUSEL: konten gambar bergeser (slide) berisi tips/insight.
+            - PODCAST_CLIP: potongan klip viral dari video/podcast panjang.
+            - REMAKE: remake suara (lipsync) - naskah AI diubah jadi suara lalu digabung ke foto/video.
+            
             Kembalikan JSON array dengan $durationDays objek:
             [
               {
                 "dayNumber": 1,
                 "title": "Judul konten spesifik",
-                "format": "CAROUSEL" | "PODCAST_CLIP" | "SELF_VIDEO",
+                "format": "CAROUSEL" | "PODCAST_CLIP" | "REMAKE",
                 "hook": "Kalimat pembuka/hook 3 detik pertama yang sangat menghentak",
                 "captionDraft": "Draft caption lengkap dengan call-to-action",
                 "hashtags": "#niche #foryou #viral #tips"
               }
             ]
-            Format harus bervariasi antara CAROUSEL, PODCAST_CLIP, dan SELF_VIDEO.
+            Format harus bervariasi antara CAROUSEL, PODCAST_CLIP, dan REMAKE. Jangan gunakan format lain.
         """.trimIndent()
 
         try {
@@ -221,7 +226,7 @@ class GeminiService(private val getApiKey: () -> String) {
                 val formatStr = obj.optString("format", "CAROUSEL")
                 val format = when (formatStr.uppercase()) {
                     "PODCAST_CLIP", "PODCAST", "CLIP" -> ContentFormat.PODCAST_CLIP
-                    "SELF_VIDEO", "VIDEO", "REELS" -> ContentFormat.SELF_VIDEO
+                    "REMAKE", "REMAKE_VOICE", "LIPSYNC", "VOICE", "SELF_VIDEO", "AI_VIDEO", "VIDEO", "REELS" -> ContentFormat.REMAKE
                     else -> ContentFormat.CAROUSEL
                 }
                 items.add(
@@ -242,7 +247,7 @@ class GeminiService(private val getApiKey: () -> String) {
 
         // Fallback intelligent generator for $durationDays days
         val fallbackItems = mutableListOf<GeneratedPlanItem>()
-        val formats = listOf(ContentFormat.CAROUSEL, ContentFormat.PODCAST_CLIP, ContentFormat.SELF_VIDEO, ContentFormat.AI_VIDEO)
+        val formats = listOf(ContentFormat.CAROUSEL, ContentFormat.PODCAST_CLIP, ContentFormat.REMAKE)
         for (day in 1..durationDays) {
             val format = formats[(day - 1) % formats.size]
             val (title, hook, caption) = when (format) {
@@ -255,6 +260,11 @@ class GeminiService(private val getApiKey: () -> String) {
                     "Mindset Krusial untuk Sukses di ${persona.niche}",
                     "99% orang salah paham soal ini saat baru mulai...",
                     "Poin penting dari obrolan ini: jangan fokus di hasil instan, bangun fondasinya dulu! Setuju gak?"
+                )
+                ContentFormat.REMAKE -> Triple(
+                    "Remake Suara: Rahasia ${persona.niche} dengan Gayamu Sendiri",
+                    "Dengar sampai habis, ini bakal ubah cara pandangmu soal ${persona.niche}!",
+                    "Naskah AI + suaramu digabung ke foto/video jadi konten baru. Follow @${persona.brandName.lowercase().replace(" ", "")} untuk insight harian!"
                 )
                 ContentFormat.SELF_VIDEO -> Triple(
                     "Kesalahan Nomor 1 yang Membuang Waktumu di ${persona.niche}",
