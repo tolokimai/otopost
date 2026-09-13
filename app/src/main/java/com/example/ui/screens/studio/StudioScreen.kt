@@ -43,11 +43,43 @@ import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import com.example.data.local.entity.CarouselSlide
 import com.example.data.local.entity.SocialPlatform
+import com.example.ui.screens.remake.RemakeVoiceScreen
 import com.example.ui.theme.*
 import com.example.viewmodel.AutoPostViewModel
 import com.example.viewmodel.StudioSubMode
 import java.text.SimpleDateFormat
 import java.util.*
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun StudioSubModeTabs(subMode: StudioSubMode, viewModel: AutoPostViewModel) {
+    Card(
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+    ) {
+        ScrollableTabRow(
+            selectedTabIndex = subMode.ordinal.coerceIn(0, 2),
+            containerColor = Color.Transparent,
+            edgePadding = 4.dp
+        ) {
+            Tab(
+                selected = subMode == StudioSubMode.CAROUSEL,
+                onClick = { viewModel.setStudioSubMode(StudioSubMode.CAROUSEL) },
+                text = { Text("Carousel", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+            )
+            Tab(
+                selected = subMode == StudioSubMode.PODCAST_CLIP,
+                onClick = { viewModel.setStudioSubMode(StudioSubMode.PODCAST_CLIP) },
+                text = { Text("Podcast Clip", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+            )
+            Tab(
+                selected = subMode == StudioSubMode.REMAKE,
+                onClick = { viewModel.setStudioSubMode(StudioSubMode.REMAKE) },
+                text = { Text("Remake", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+            )
+        }
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -62,6 +94,30 @@ fun StudioScreen(
     val hashtags by viewModel.studioContentHashtags.collectAsState()
 
     var showScheduleDialog by remember { mutableStateOf(false) }
+
+    // Mode REMAKE tampil penuh di dalam Studio (early-return agar RemakeVoiceScreen yang
+    // punya scroll sendiri tidak bentrok dengan LazyColumn / nested scroll crash).
+    if (subMode == StudioSubMode.REMAKE) {
+        Column(
+            modifier = modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = "Studio Produksi Konten",
+                fontSize = 24.sp,
+                fontWeight = FontWeight.ExtraBold,
+                color = MaterialTheme.colorScheme.onBackground
+            )
+            StudioSubModeTabs(subMode, viewModel)
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                RemakeVoiceScreen()
+            }
+        }
+        return
+    }
 
     LazyColumn(
         modifier = modifier
@@ -79,46 +135,16 @@ fun StudioScreen(
                     color = MaterialTheme.colorScheme.onBackground
                 )
                 Text(
-                    text = "Buat visual carousel, klip podcast YouTube, & naskah video siap publish.",
+                    text = "Buat visual carousel, klip podcast YouTube, & remake video (lipsync) siap publish.",
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
 
-        // --- Sub-Mode Selector Tabs (4 Modes) ---
+        // --- Sub-Mode Selector Tabs (Carousel / Podcast Clip / Remake) ---
         item {
-            Card(
-                shape = RoundedCornerShape(14.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-            ) {
-                ScrollableTabRow(
-                    selectedTabIndex = subMode.ordinal,
-                    containerColor = Color.Transparent,
-                    edgePadding = 4.dp
-                ) {
-                    Tab(
-                        selected = subMode == StudioSubMode.CAROUSEL,
-                        onClick = { viewModel.setStudioSubMode(StudioSubMode.CAROUSEL) },
-                        text = { Text("Carousel", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
-                    )
-                    Tab(
-                        selected = subMode == StudioSubMode.PODCAST_CLIP,
-                        onClick = { viewModel.setStudioSubMode(StudioSubMode.PODCAST_CLIP) },
-                        text = { Text("Podcast Clip", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
-                    )
-                    Tab(
-                        selected = subMode == StudioSubMode.SELF_VIDEO,
-                        onClick = { viewModel.setStudioSubMode(StudioSubMode.SELF_VIDEO) },
-                        text = { Text("Video Sendiri", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
-                    )
-                    Tab(
-                        selected = subMode == StudioSubMode.AI_VIDEO,
-                        onClick = { viewModel.setStudioSubMode(StudioSubMode.AI_VIDEO) },
-                        text = { Text("Buat Video", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
-                    )
-                }
-            }
+            StudioSubModeTabs(subMode, viewModel)
         }
 
         // --- Sub-Mode Specific Content ---
@@ -128,6 +154,9 @@ fun StudioScreen(
             }
             StudioSubMode.PODCAST_CLIP -> {
                 item { PodcastClipStudioContent(viewModel) }
+            }
+            StudioSubMode.REMAKE -> {
+                // Ditangani lewat early-return di atas.
             }
             StudioSubMode.SELF_VIDEO -> {
                 item { SelfVideoStudioContent(viewModel) }
@@ -1536,214 +1565,4 @@ fun SelfVideoStudioContent(viewModel: AutoPostViewModel) {
         ) {
             Column(
                 modifier = Modifier.fillMaxWidth().padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text("Teks Hook Atas Video:", fontSize = 13.sp, fontWeight = FontWeight.Bold)
-
-                OutlinedTextField(
-                    value = hookText,
-                    onValueChange = { viewModel.setSelfVideoHookText(it) },
-                    label = { Text("Teks Hook (Maks 10 kata)") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-        }
-
-        Card(
-            shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-        ) {
-            Column(
-                modifier = Modifier.fillMaxWidth().padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("Daftar Subtitle / Baris Naskah:", fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                    IconButton(onClick = { showAddSubtitleDialog = true }) {
-                        Icon(Icons.Default.Add, contentDescription = "Tambah Subtitle", tint = MaterialTheme.colorScheme.primary)
-                    }
-                }
-
-                subtitles.forEachIndexed { index, line ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer, modifier = Modifier.size(20.dp)) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Text("${index + 1}", fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                            }
-                        }
-                        Text(
-                            text = line,
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.weight(1f)
-                        )
-                        IconButton(
-                            onClick = {
-                                val updated = subtitles.toMutableList()
-                                updated.removeAt(index)
-                                viewModel.updateSelfVideoSubtitles(updated)
-                            },
-                            modifier = Modifier.size(24.dp)
-                        ) {
-                            Icon(Icons.Default.Close, contentDescription = "Hapus", modifier = Modifier.size(14.dp), tint = StatusFailed)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    if (showAddSubtitleDialog) {
-        var newLine by remember { mutableStateOf("") }
-        AlertDialog(
-            onDismissRequest = { showAddSubtitleDialog = false },
-            title = { Text("Tambah Baris Subtitle", fontSize = 16.sp, fontWeight = FontWeight.Bold) },
-            text = {
-                OutlinedTextField(
-                    value = newLine,
-                    onValueChange = { newLine = it },
-                    label = { Text("Kalimat Subtitle") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        if (newLine.isNotBlank()) {
-                            viewModel.updateSelfVideoSubtitles(subtitles + newLine)
-                            showAddSubtitleDialog = false
-                        }
-                    }
-                ) {
-                    Text("Tambah")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showAddSubtitleDialog = false }) {
-                    Text("Batal")
-                }
-            }
-        )
-    }
-}
-
-// ==========================================
-// COMMON SCHEDULE POST DIALOG
-// ==========================================
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun SchedulePostDialog(
-    defaultHour: Int,
-    defaultMinute: Int,
-    onDismiss: () -> Unit,
-    onConfirmSchedule: (List<SocialPlatform>, Long) -> Unit
-) {
-    var tiktokSelected by remember { mutableStateOf(true) }
-    var instagramSelected by remember { mutableStateOf(true) }
-    var youtubeSelected by remember { mutableStateOf(true) }
-    var facebookSelected by remember { mutableStateOf(false) }
-
-    var postHour by remember { mutableStateOf(defaultHour) }
-    var postMinute by remember { mutableStateOf(defaultMinute) }
-    var daysAhead by remember { mutableStateOf(0) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.ScheduleSend, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.width(8.dp))
-                Text("Jadwalkan Publikasi Konten", fontSize = 17.sp, fontWeight = FontWeight.Bold)
-            }
-        },
-        text = {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Text("Pilih Platform Target:", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-
-                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(checked = tiktokSelected, onCheckedChange = { tiktokSelected = it })
-                    Text("TikTok Video (@creator_tiktok)", fontSize = 13.sp)
-                }
-                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(checked = instagramSelected, onCheckedChange = { instagramSelected = it })
-                    Text("Instagram Reels / Carousel (@creator_reels)", fontSize = 13.sp)
-                }
-                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(checked = youtubeSelected, onCheckedChange = { youtubeSelected = it })
-                    Text("YouTube Shorts (Creator Channel)", fontSize = 13.sp)
-                }
-                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(checked = facebookSelected, onCheckedChange = { facebookSelected = it })
-                    Text("Facebook Reels (Page)", fontSize = 13.sp)
-                }
-
-                HorizontalDivider()
-
-                Text("Waktu Penayangan:", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    FilterChip(selected = daysAhead == 0, onClick = { daysAhead = 0 }, label = { Text("Hari Ini") })
-                    FilterChip(selected = daysAhead == 1, onClick = { daysAhead = 1 }, label = { Text("Besok") })
-                    FilterChip(selected = daysAhead == 2, onClick = { daysAhead = 2 }, label = { Text("+2 Hari") })
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Text("Jam Tayang:", fontSize = 13.sp)
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = MaterialTheme.colorScheme.primaryContainer
-                    ) {
-                        Text(
-                            text = String.format("%02d:%02d WIB", postHour, postMinute),
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                        )
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    val platforms = mutableListOf<SocialPlatform>()
-                    if (tiktokSelected) platforms.add(SocialPlatform.TIKTOK)
-                    if (instagramSelected) platforms.add(SocialPlatform.INSTAGRAM)
-                    if (youtubeSelected) platforms.add(SocialPlatform.YOUTUBE_SHORTS)
-                    if (facebookSelected) platforms.add(SocialPlatform.FACEBOOK_REELS)
-
-                    val cal = Calendar.getInstance()
-                    cal.add(Calendar.DAY_OF_YEAR, daysAhead)
-                    cal.set(Calendar.HOUR_OF_DAY, postHour)
-                    cal.set(Calendar.MINUTE, postMinute)
-                    cal.set(Calendar.SECOND, 0)
-
-                    onConfirmSchedule(platforms, cal.timeInMillis)
-                },
-                enabled = tiktokSelected || instagramSelected || youtubeSelected || facebookSelected
-            ) {
-                Text("Konfirmasi Jadwal")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Batal")
-            }
-        }
-    )
-}
+                verticalArrangement = Arrangement.spac
