@@ -8,8 +8,10 @@ import android.provider.MediaStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
@@ -42,18 +44,30 @@ data class SavedVideoFile(
     val displayName: String
 )
 
+/** Media (video/foto/audio) yang berhasil di-upload ke Clip Server untuk proses remake/lipsync. */
+data class UploadedMedia(
+    val mediaId: String,
+    val url: String
+)
+
+/** Hasil akhir remake/lipsync dari server (video jadi dengan suara baru). */
+data class RemakeResult(
+    val downloadUrl: String,
+    val durationSec: Int
+)
+
 /**
  * Klien untuk OtoPost Clip Server (yt-dlp + ffmpeg + OpenCV).
  *
  * baseUrl contoh: https://chat.agenthebat.com/handle
- * Semua pekerjaan berat (download HD, potong, reframe, transkrip, subtitle) dilakukan di server;
- * app hanya memanggil endpoint & mengunduh hasil clip.
+ * Semua pekerjaan berat (download HD, potong, reframe, transkrip, subtitle, lipsync) dilakukan di server;
+ * app hanya memanggil endpoint & mengunduh hasil.
  */
 class ClipServerService(
     private val getBaseUrl: () -> String,
     private val getToken: () -> String = { "" }
 ) {
-    // Timeout longgar: proses server (download HD + potong + reframe + subtitle) bisa lama.
+    // Timeout longgar: proses server (download HD + potong + reframe + subtitle + lipsync) bisa lama.
     private val client = OkHttpClient.Builder()
         .connectTimeout(60, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.MINUTES)
@@ -181,6 +195,92 @@ class ClipServerService(
             }
         } catch (e: Exception) {
             emptyList()
+        }
+    }
+
+    /**
+     * Upload sebuah file (video/foto/audio) ke Clip Server untuk dipakai proses remake/lipsync.
+     * kind: "video" | "photo" | "audio".
+     * Return UploadedMedia (mediaId + url) atau null bila gagal.
+     *
+     * Endpoint server (WAJIB diimplementasikan di sisi server, karena server bisa dimodifikasi):
+     *   POST /upload  (multipart/form-data)
+     *     field "file" = berkas biner, field "kind" = jenis media.
+     *   Respon JSON: { "mediaId": "...", "url": "..." }
+     */
+    suspend fun uploadMedia(file: File, kind: String): UploadedMedia? = withContext(Dispatchers.IO) {
+        if (!file.exists()) return@withContext null
+        try {
+            val mime = when (kind) {
+                "audio" -> "audio/mpeg"
+                "photo" -> "image/*"
+                else -> "video/*"
+            }
+            val body = MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart("kind", kind)
+                .addFormDataPart("file", file.name, file.asRequestBody(mime.toMediaType()))
+                .build()
+            val req = authed(base() + "/upload").post(body).build()
+            client.newCall(req).execute().use { resp ->
+                val respBody = resp.body?.string() ?: return@withContext null
+                if (!resp.isSuccessful) return@withContext null
+                val o = JSONObject(respBody)
+                val id = o.optString("mediaId")
+                val url = o.optString("url")
+                if (id.isBlank() && url.isBlank()) return@withContext null
+                UploadedMedia(id, url)
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Minta server menempelkan SUARA BARU ke media (foto/video) — TRUE lipsync (gerak bibir mengikuti
+     * kata baru) bila wajah terdeteksi, atau overlay suara bila tidak.
+     *
+     * Aturan durasi: SUARA = acuan utama (tidak ada syarat video harus lebih panjang dari suara).
+     *   - Foto  -> dijadikan video sepanjang audio (efek gerak / Ken Burns).
+     *   - Video lebih pendek dari audio -> di-loop sampai audio selesai.
+     *   - Video lebih panjang dari audio -> dipotong mengikuti panjang audio.
+     *
+     * Endpoint server (WAJIB diimplementasikan di sisi server):
+     *   POST /lipsync  (application/json)
+     *     { "mediaId", "mediaKind", "audioId", "mode", "aspectRatio", "subtitle", "subtitleStyle" }
+     *   Respon JSON: { "downloadUrl": "...", "durationSec": n }
+     */
+    suspend fun requestRemake(
+        mediaId: String,
+        mediaKind: String,
+        audioId: String,
+        mode: String = "lipsync",
+        aspectRatio: String = "9:16",
+        subtitle: Boolean = false,
+        subtitleStyle: String = "clean"
+    ): RemakeResult? = withContext(Dispatchers.IO) {
+        try {
+            val payload = JSONObject()
+                .put("mediaId", mediaId)
+                .put("mediaKind", mediaKind)
+                .put("audioId", audioId)
+                .put("mode", mode)
+                .put("aspectRatio", aspectRatio)
+                .put("subtitle", subtitle)
+                .put("subtitleStyle", subtitleStyle)
+            val req = authed(base() + "/lipsync")
+                .post(payload.toString().toRequestBody(jsonType))
+                .build()
+            client.newCall(req).execute().use { resp ->
+                val body = resp.body?.string() ?: return@withContext null
+                if (!resp.isSuccessful) return@withContext null
+                val o = JSONObject(body)
+                val dl = o.optString("downloadUrl")
+                if (dl.isBlank()) return@withContext null
+                RemakeResult(dl, o.optInt("durationSec", 0))
+            }
+        } catch (e: Exception) {
+            null
         }
     }
 
