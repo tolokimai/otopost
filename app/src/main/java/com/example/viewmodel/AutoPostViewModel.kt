@@ -36,6 +36,7 @@ sealed class MainTab(val route: String, val titleId: String, val iconName: Strin
 enum class StudioSubMode {
     CAROUSEL,
     PODCAST_CLIP,
+    REMAKE,
     SELF_VIDEO,
     AI_VIDEO
 }
@@ -331,6 +332,9 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
             ContentFormat.PODCAST_CLIP -> {
                 _studioSubMode.value = StudioSubMode.PODCAST_CLIP
                 searchPodcastCandidates(item.title)
+            }
+            ContentFormat.REMAKE -> {
+                _studioSubMode.value = StudioSubMode.REMAKE
             }
             ContentFormat.SELF_VIDEO -> {
                 _studioSubMode.value = StudioSubMode.SELF_VIDEO
@@ -1750,6 +1754,7 @@ class AutoPostViewModel(application: Application) : AndroidViewModel(application
             val format = when (_studioSubMode.value) {
                 StudioSubMode.CAROUSEL -> ContentFormat.CAROUSEL
                 StudioSubMode.PODCAST_CLIP -> ContentFormat.PODCAST_CLIP
+                StudioSubMode.REMAKE -> ContentFormat.REMAKE
                 StudioSubMode.SELF_VIDEO -> ContentFormat.SELF_VIDEO
                 StudioSubMode.AI_VIDEO -> ContentFormat.AI_VIDEO
             }
