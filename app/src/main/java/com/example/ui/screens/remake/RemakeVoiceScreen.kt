@@ -46,7 +46,11 @@ import java.io.File
  * Self-contained: membuat service sendiri via SettingsManager, tidak bergantung pada ViewModel.
  */
 @Composable
-fun RemakeVoiceScreen() {
+fun RemakeVoiceScreen(
+    incomingTitle: String = "",
+    incomingHook: String = "",
+    incomingCaption: String = "",
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val settingsManager = remember { SettingsManager(context.applicationContext) }
@@ -99,6 +103,19 @@ fun RemakeVoiceScreen() {
     var busy by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("") }
     var resultDuration by remember { mutableStateOf(0) }
+
+    // Sinkronisasi data dari halaman Plan (dikirim via "Kirim ke Studio").
+    LaunchedEffect(incomingTitle, incomingHook, incomingCaption) {
+        if (incomingTitle.isNotBlank() || incomingHook.isNotBlank() || incomingCaption.isNotBlank()) {
+            title = incomingTitle
+            hook = incomingHook
+            caption = incomingCaption
+            if (script.isBlank()) {
+                script = listOf(incomingHook, incomingTitle, incomingCaption)
+                    .filter { it.isNotBlank() }.joinToString(" ").trim()
+            }
+        }
+    }
 
     fun hasRecordPermission(): Boolean =
         ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
@@ -195,7 +212,10 @@ fun RemakeVoiceScreen() {
         scope.launch {
             try {
                 voices = elevenLabs.listVoices()
-                status = "Ditemukan " + voices.size + " suara."
+                status = if (voices.isEmpty())
+                    "Gagal memuat suara: " + (elevenLabs.lastError ?: "0 suara (cek API key / izin key di ElevenLabs)")
+                else
+                    "Ditemukan " + voices.size + " suara."
             } catch (e: Exception) {
                 status = "Gagal memuat daftar suara."
             } finally {
@@ -234,7 +254,7 @@ fun RemakeVoiceScreen() {
                     audioFile = v.file
                     audioLabel = "TTS ElevenLabs (~" + v.approxDurationSec + " dtk)"
                     status = "Suara siap."
-                } else status = "Gagal membuat suara (cek API key / kuota)."
+                } else status = "Gagal membuat suara: " + (elevenLabs.lastError ?: "cek API key / kuota")
             } catch (e: Exception) {
                 status = "Error TTS: " + (e.message ?: "")
             } finally {
