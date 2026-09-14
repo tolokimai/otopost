@@ -21,7 +21,11 @@ bila Wav2Lip siap (ENABLE_WAV2LIP=1 + WAV2LIP_DIR + WAV2LIP_CKPT + torch). Bila 
 otomatis fallback: foto -> Ken Burns + suara, video -> overlay suara (bibir lama).
 
 EFISIENSI GPU: frame wajah yang dikirim ke Wav2Lip dibatasi tingginya
-(WAV2LIP_MAX_FACE_HEIGHT, default 1280) agar tidak "Image too big" / CUDA OOM di GPU 8GB.
+(WAV2LIP_MAX_FACE_HEIGHT, default 960 = sweet-spot kualitas Wav2Lip) agar tidak
+"Image too big" / CUDA OOM di GPU 8GB, sekaligus mulut tidak terlalu blur.
+
+KUALITAS/NATURAL (hilangkan kotak bibir, blend halus, color-match, bekukan mulut saat
+hening) diatur di lipsync_engine.py + inference.py. Lihat GET /lipsync-status -> "config".
 """
 import os
 import json
@@ -99,7 +103,7 @@ def _target_scale(aspect: str) -> str:
 
 def _face_scale(aspect: str) -> str:
     """Resolusi frame wajah untuk Wav2Lip, dibatasi WAV2LIP_MAX_FACE_HEIGHT agar muat GPU.
-    Contoh 9:16 + maxH 1280 -> 720:1280 (jauh lebih ringan dari 1080:1920)."""
+    Contoh 9:16 + maxH 960 -> 540:960 (sweet-spot: ringan + mulut tetap tajam)."""
     maxh = max(256, int(lipsync_engine.max_face_height()))
     if aspect == "1:1":
         bw, bh = 1080, 1080
@@ -225,9 +229,10 @@ def _scale_to_aspect(video: str, scale: str, out_path: str) -> bool:
         "scale=" + w + ":" + h + ":force_original_aspect_ratio=increase,"
         "crop=" + w + ":" + h + ",setsar=1,format=yuv420p"
     )
+    # crf rendah + preset medium: input wajah setajam mungkin (silent) -> lipsync lebih detail.
     cmd = [
         "ffmpeg", "-y", "-i", video, "-an", "-vf", vf,
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", out_path,
+        "-c:v", "libx264", "-preset", "medium", "-crf", "16", out_path,
     ]
     proc = subprocess.run(cmd, capture_output=True)
     if proc.returncode != 0:
