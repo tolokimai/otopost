@@ -289,10 +289,10 @@ fun RemakeVoiceScreen(
         scope.launch {
             try {
                 val up = clipServer.uploadMedia(media, mediaKind)
-                if (up == null) { status = "Gagal upload media."; busy = false; return@launch }
+                if (up == null) { status = "Gagal upload media: " + (clipServer.lastError ?: "cek koneksi / URL server"); busy = false; return@launch }
                 status = "Mengunggah suara..."
                 val upAudio = clipServer.uploadMedia(audio, "audio")
-                if (upAudio == null) { status = "Gagal upload suara."; busy = false; return@launch }
+                if (upAudio == null) { status = "Gagal upload suara: " + (clipServer.lastError ?: "cek koneksi / URL server"); busy = false; return@launch }
                 status = if (lipsyncMode) "Memproses lipsync di server..." else "Menempel suara di server..."
                 val res = clipServer.requestRemake(
                     mediaId = up.mediaId,
@@ -303,7 +303,7 @@ fun RemakeVoiceScreen(
                     subtitle = subtitle,
                     subtitleStyle = "clean"
                 )
-                if (res == null) { status = "Server gagal memproses remake."; busy = false; return@launch }
+                if (res == null) { status = "Server gagal memproses remake: " + (clipServer.lastError ?: "tidak diketahui"); busy = false; return@launch }
                 status = "Mengunduh hasil ke galeri..."
                 val saved = clipServer.downloadClipToGallery(context, res.downloadUrl, "remake_" + title.ifBlank { "video" })
                 resultDuration = res.durationSec
