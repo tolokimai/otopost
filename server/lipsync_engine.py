@@ -25,6 +25,16 @@ Ubah lewat environment variable SEBELUM start server:
 - WAV2LIP_EXTRA_ARGS          (opsional) argumen tambahan mentah; menimpa default di atas bila
                                             flag yang sama disebut.
 
+KUALITAS / NATURAL (diteruskan ke inference.py; semua ADA DEFAULT):
+- WAV2LIP_BLEND           (default 1)     1=blend mulut halus (hilangkan kotak), 0=tempel kasar.
+- WAV2LIP_FEATHER         (default 0.12)  lebar tepi transisi (fraksi kotak wajah).
+- WAV2LIP_MOUTH_TOP       (default 0.45)  fraksi bagian atas wajah yang dipertahankan asli.
+- WAV2LIP_SEAMLESS        (default 0)     1=Poisson seamlessClone (paling menyatu, lebih berat).
+- WAV2LIP_COLOR_MATCH     (default 1)     1=samakan warna tempelan dgn kulit sekitar.
+- WAV2LIP_FREEZE_SILENCE  (default 1)     1=mulut diam saat audio hening (jeda napas/kalimat).
+- WAV2LIP_SILENCE_DB      (default -38)   ambang dB hening.
+- WAV2LIP_MIN_SILENCE_MS  (default 120)   durasi minimum hening (ms) agar mulut dibekukan.
+
 Catatan: Wav2Lip bisa menganimasikan bibir dari VIDEO wajah maupun dari FOTO diam
 (inference.py otomatis mode statis bila --face berupa gambar).
 
@@ -51,6 +61,14 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_float(name: str, default: float) -> float:
+    try:
+        v = str(os.environ.get(name, "")).strip()
+        return float(v) if v else default
+    except Exception:
+        return default
+
+
 def enabled() -> bool:
     return _env("ENABLE_WAV2LIP", "").lower() in ("1", "true", "yes", "on")
 
@@ -71,17 +89,26 @@ def config() -> dict:
     """Konfigurasi performa aktif + default-nya (dipakai juga oleh /lipsync-status)."""
     return {
         "resizeFactor": _env_int("WAV2LIP_RESIZE_FACTOR", 1),
-        "faceDetBatchSize": _env_int("WAV2LIP_FACE_DET_BATCH_SIZE", 4),
-        "wav2lipBatchSize": _env_int("WAV2LIP_BATCH_SIZE", 64),
+        "faceDetBatchSize": _env_int("WAV2LIP_FACE_DET_BATCH_SIZE", 8),
+        "wav2lipBatchSize": _env_int("WAV2LIP_BATCH_SIZE", 128),
         "pads": _env("WAV2LIP_PADS", "0 10 0 0"),
-        "maxFaceHeight": _env_int("WAV2LIP_MAX_FACE_HEIGHT", 1280),
+        "maxFaceHeight": _env_int("WAV2LIP_MAX_FACE_HEIGHT", 960),
         "timeoutSec": _env_int("WAV2LIP_TIMEOUT_SEC", 900),
+        # --- Kualitas / naturalisasi (diteruskan ke inference.py) ---
+        "blend": _env_int("WAV2LIP_BLEND", 1),
+        "feather": _env_float("WAV2LIP_FEATHER", 0.12),
+        "mouthTop": _env_float("WAV2LIP_MOUTH_TOP", 0.45),
+        "seamless": _env_int("WAV2LIP_SEAMLESS", 0),
+        "colorMatch": _env_int("WAV2LIP_COLOR_MATCH", 1),
+        "freezeSilence": _env_int("WAV2LIP_FREEZE_SILENCE", 1),
+        "silenceDb": _env_float("WAV2LIP_SILENCE_DB", -38.0),
+        "minSilenceMs": _env_int("WAV2LIP_MIN_SILENCE_MS", 120),
         "extraArgs": _env("WAV2LIP_EXTRA_ARGS", ""),
     }
 
 
 def max_face_height() -> int:
-    return _env_int("WAV2LIP_MAX_FACE_HEIGHT", 1280)
+    return _env_int("WAV2LIP_MAX_FACE_HEIGHT", 960)
 
 
 def _torch_check(python_bin: str) -> dict:
@@ -150,6 +177,23 @@ def _build_perf_args(cfg: dict) -> list:
         args += ["--wav2lip_batch_size", str(max(1, int(cfg["wav2lipBatchSize"])))]
     if "--pads" not in present and str(cfg.get("pads", "")).strip():
         args += ["--pads"] + str(cfg["pads"]).split()
+    # --- Flag kualitas / naturalisasi ---
+    if "--blend" not in present:
+        args += ["--blend", str(int(cfg["blend"]))]
+    if "--feather" not in present:
+        args += ["--feather", str(float(cfg["feather"]))]
+    if "--mouth_top" not in present:
+        args += ["--mouth_top", str(float(cfg["mouthTop"]))]
+    if "--seamless" not in present:
+        args += ["--seamless", str(int(cfg["seamless"]))]
+    if "--color_match" not in present:
+        args += ["--color_match", str(int(cfg["colorMatch"]))]
+    if "--freeze_silence" not in present:
+        args += ["--freeze_silence", str(int(cfg["freezeSilence"]))]
+    if "--silence_db" not in present:
+        args += ["--silence_db", str(float(cfg["silenceDb"]))]
+    if "--min_silence_ms" not in present:
+        args += ["--min_silence_ms", str(int(cfg["minSilenceMs"]))]
     if extra:
         args += extra.split()
     return args
