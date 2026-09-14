@@ -1,9 +1,15 @@
 """
 OtoPost Remake / Lipsync endpoints (modul terpisah agar main.py yang sudah jalan aman).
 
-- POST /upload         : upload media (video/photo/audio) -> {mediaId, url}
-- POST /lipsync        : tempel SUARA BARU ke media (foto/video) dengan aturan durasi.
-- GET  /lipsync-status : diagnostik apakah Wav2Lip (TRUE lipsync) siap.
+- POST /upload            : upload media (video/photo/audio) -> {mediaId, url}
+- POST /lipsync           : MULAI job remake (async). Balas cepat {job, status:"processing", statusUrl}.
+- GET  /lipsync-result/{job} : cek status job -> {status: processing|done|error, downloadUrl?, reason?}
+- GET  /lipsync-status    : diagnostik apakah Wav2Lip (TRUE lipsync) siap + konfigurasi performa.
+
+KENAPA ASYNC?
+Proses Wav2Lip bisa >100 detik, sedangkan proxy (mis. Cloudflare) memutus koneksi ~100s (error 524).
+Dengan async, /lipsync langsung balas job id, lalu app polling GET /lipsync-result/{job}.
+Setiap request jadi pendek -> tidak kena 524. Server juga tidak memproses dobel karena user retry.
 
 Aturan durasi (SUARA = acuan utama):
 - Foto  -> dijadikan video sepanjang audio
@@ -13,11 +19,16 @@ Aturan durasi (SUARA = acuan utama):
 TRUE lipsync (gerak bibir mengikuti kata baru) untuk FOTO maupun VIDEO aktif hanya
 bila Wav2Lip siap (ENABLE_WAV2LIP=1 + WAV2LIP_DIR + WAV2LIP_CKPT + torch). Bila tidak,
 otomatis fallback: foto -> Ken Burns + suara, video -> overlay suara (bibir lama).
+
+EFISIENSI GPU: frame wajah yang dikirim ke Wav2Lip dibatasi tingginya
+(WAV2LIP_MAX_FACE_HEIGHT, default 1280) agar tidak "Image too big" / CUDA OOM di GPU 8GB.
 """
 import os
+import json
 import uuid
 import glob
 import shutil
+import threading
 import subprocess
 from typing import Optional
 
@@ -40,6 +51,10 @@ ALLOWED = {
     "audio": [".mp3", ".m4a", ".aac", ".wav", ".ogg", ".opus"],
 }
 
+# ---- Registry job async (memori + status.json di folder job agar tahan restart) ----
+_JOBS = {}
+_JOBS_LOCK = threading.Lock()
+
 
 def _check_auth(authorization: Optional[str]):
     if not CLIP_SERVER_TOKEN:
@@ -50,6 +65,10 @@ def _check_auth(authorization: Optional[str]):
 
 def _file_url(rel_path: str) -> str:
     return (PUBLIC_BASE_URL if PUBLIC_BASE_URL else "") + "/files/" + rel_path
+
+
+def _status_url(job: str) -> str:
+    return (PUBLIC_BASE_URL if PUBLIC_BASE_URL else "") + "/lipsync-result/" + job
 
 
 def _media_path(media_id: str) -> Optional[str]:
@@ -76,6 +95,25 @@ def _target_scale(aspect: str) -> str:
     if aspect == "16:9":
         return "1920:1080"
     return "1080:1920"  # 9:16 default
+
+
+def _face_scale(aspect: str) -> str:
+    """Resolusi frame wajah untuk Wav2Lip, dibatasi WAV2LIP_MAX_FACE_HEIGHT agar muat GPU.
+    Contoh 9:16 + maxH 1280 -> 720:1280 (jauh lebih ringan dari 1080:1920)."""
+    maxh = max(256, int(lipsync_engine.max_face_height()))
+    if aspect == "1:1":
+        bw, bh = 1080, 1080
+    elif aspect == "16:9":
+        bw, bh = 1920, 1080
+    else:
+        bw, bh = 1080, 1920
+    # batasi sisi terpanjang ke maxh (biar 16:9 pun ikut turun)
+    longest = max(bw, bh)
+    if longest > maxh:
+        ratio = maxh / float(longest)
+        bw = int(round(bw * ratio / 2) * 2)
+        bh = int(round(bh * ratio / 2) * 2)
+    return str(max(2, bw)) + ":" + str(max(2, bh))
 
 
 # ---------------- Upload ----------------
@@ -107,7 +145,7 @@ async def upload(
 # ---------------- Diagnostik ----------------
 @router.get("/lipsync-status")
 def lipsync_status():
-    """Tampilkan apakah TRUE lipsync (Wav2Lip) siap + petunjuk bila belum."""
+    """Tampilkan apakah TRUE lipsync (Wav2Lip) siap + konfigurasi performa + petunjuk."""
     return lipsync_engine.status()
 
 
@@ -197,8 +235,105 @@ def _scale_to_aspect(video: str, scale: str, out_path: str) -> bool:
     return proc.returncode == 0 and os.path.exists(out_path)
 
 
+# ---------------- Job registry helpers ----------------
+def _job_dir(job: str) -> str:
+    return os.path.join(WORK_DIR, job)
+
+
+def _set_job(job: str, **fields):
+    with _JOBS_LOCK:
+        st = _JOBS.get(job, {})
+        st.update(fields)
+        _JOBS[job] = st
+        snapshot = dict(st)
+    try:
+        with open(os.path.join(_job_dir(job), "status.json"), "w", encoding="utf-8") as f:
+            json.dump(snapshot, f)
+    except Exception:
+        pass
+
+
+def _get_job(job: str) -> Optional[dict]:
+    with _JOBS_LOCK:
+        if job in _JOBS:
+            return dict(_JOBS[job])
+    p = os.path.join(_job_dir(job), "status.json")
+    if os.path.exists(p):
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return None
+    return None
+
+
+def _process_remake(job, media, audio, kind, want_lipsync, scale, face_scale, adur):
+    """Pekerjaan berat, dijalankan di thread background."""
+    tmp = _job_dir(job)
+    out_name = "remake.mp4"
+    out_path = os.path.join(tmp, out_name)
+    lipsync_applied = False
+    reason = ""
+    ok = False
+    try:
+        # ---- Coba TRUE lipsync (foto ATAU video) bila diminta & Wav2Lip siap ----
+        if want_lipsync and lipsync_engine.is_ready():
+            try:
+                if kind == "photo":
+                    face = os.path.join(tmp, "face.png")
+                    built = _photo_to_still(media, face_scale, face)
+                else:
+                    face = os.path.join(tmp, "face.mp4")
+                    built = _scale_to_aspect(media, face_scale, face)
+                if not built:
+                    reason = "Gagal menyiapkan input wajah untuk Wav2Lip (cek ffmpeg)."
+                elif lipsync_engine.run_wav2lip(face, audio, out_path):
+                    lipsync_applied = True
+                    ok = True
+                else:
+                    reason = "Wav2Lip tidak menghasilkan output (cek log server / wajah tidak terdeteksi / VRAM)."
+            except Exception as e:
+                reason = "Wav2Lip error: " + str(e)
+                print("WARNING:", reason)
+        elif want_lipsync and not lipsync_engine.is_ready():
+            reason = ("Wav2Lip belum siap (enabled=%s). Buka GET /lipsync-status untuk detail."
+                      % lipsync_engine.enabled())
+
+        # ---- Fallback (tanpa gerak bibir) ----
+        if not ok:
+            if kind == "photo":
+                ok = _photo_to_video(media, audio, adur, scale, out_path)
+            else:
+                vdur = _ffprobe_duration(media)
+                ok = _video_remux(media, audio, adur, vdur, scale, out_path)
+
+        if not ok or not os.path.exists(out_path):
+            _set_job(job, status="error", reason=(reason or "Gagal memproses remake (ffmpeg)."),
+                     lipsyncApplied=False)
+            print("Remake GAGAL (%s). Alasan: %s" % (job, reason or "ffmpeg"))
+            return
+
+        final_dur = _ffprobe_duration(out_path)
+        if lipsync_applied:
+            print("Remake selesai: TRUE lipsync diterapkan (%s)." % kind)
+        else:
+            print("Remake selesai: mode fallback (%s). Alasan: %s" % (kind, reason or "mode overlay diminta"))
+        _set_job(
+            job,
+            status="done",
+            downloadUrl=_file_url(job + "/" + out_name),
+            durationSec=int(round(final_dur if final_dur > 0 else adur)),
+            lipsyncApplied=lipsync_applied,
+            reason=reason,
+        )
+    except Exception as e:
+        _set_job(job, status="error", reason="Server error: " + str(e)[:300], lipsyncApplied=False)
+        print("Remake EXCEPTION (%s):" % job, str(e)[:300])
+
+
 @router.post("/lipsync")
 def lipsync(req: LipsyncRequest, authorization: Optional[str] = Header(default=None)):
+    """Mulai job remake secara async. Balas cepat agar tidak kena timeout proxy (524)."""
     _check_auth(authorization)
     media = _media_path(req.mediaId)
     audio = _media_path(req.audioId)
@@ -210,62 +345,40 @@ def lipsync(req: LipsyncRequest, authorization: Optional[str] = Header(default=N
     if adur <= 0:
         raise HTTPException(status_code=400, detail="Durasi audio tidak terbaca")
 
-    scale = _target_scale(req.aspectRatio or "9:16")
+    aspect = req.aspectRatio or "9:16"
+    scale = _target_scale(aspect)
+    face_scale = _face_scale(aspect)
     kind = req.mediaKind or "video"
     want_lipsync = (req.mode or "lipsync") == "lipsync"
     job = "rmk_" + uuid.uuid4().hex[:12]
-    tmp = os.path.join(WORK_DIR, job)
+    tmp = _job_dir(job)
     os.makedirs(tmp, exist_ok=True)
-    out_name = "remake.mp4"
-    out_path = os.path.join(tmp, out_name)
+    _set_job(job, status="processing", lipsyncApplied=False, reason="", downloadUrl="")
 
-    lipsync_applied = False
-    reason = ""
-    ok = False
+    t = threading.Thread(
+        target=_process_remake,
+        args=(job, media, audio, kind, want_lipsync, scale, face_scale, adur),
+        daemon=True,
+    )
+    t.start()
 
-    # ---- Coba TRUE lipsync (foto ATAU video) bila diminta & Wav2Lip siap ----
-    if want_lipsync and lipsync_engine.is_ready():
-        try:
-            if kind == "photo":
-                face = os.path.join(tmp, "face.png")
-                built = _photo_to_still(media, scale, face)
-            else:
-                face = os.path.join(tmp, "face.mp4")
-                built = _scale_to_aspect(media, scale, face)
-            if not built:
-                reason = "Gagal menyiapkan input wajah untuk Wav2Lip (cek ffmpeg)."
-            elif lipsync_engine.run_wav2lip(face, audio, out_path):
-                lipsync_applied = True
-                ok = True
-            else:
-                reason = "Wav2Lip tidak menghasilkan output (cek log server / wajah tidak terdeteksi)."
-        except Exception as e:
-            reason = "Wav2Lip error: " + str(e)
-            print("WARNING:", reason)
-    elif want_lipsync and not lipsync_engine.is_ready():
-        reason = ("Wav2Lip belum siap (enabled=%s). Buka GET /lipsync-status untuk detail."
-                  % lipsync_engine.enabled())
-
-    # ---- Fallback (tanpa gerak bibir) ----
-    if not ok:
-        if kind == "photo":
-            ok = _photo_to_video(media, audio, adur, scale, out_path)
-        else:
-            vdur = _ffprobe_duration(media)
-            ok = _video_remux(media, audio, adur, vdur, scale, out_path)
-
-    if not ok or not os.path.exists(out_path):
-        raise HTTPException(status_code=500, detail="Gagal memproses remake")
-
-    final_dur = _ffprobe_duration(out_path)
-    if lipsync_applied:
-        print("Remake selesai: TRUE lipsync diterapkan (%s)." % kind)
-    else:
-        print("Remake selesai: mode fallback (%s). Alasan: %s" % (kind, reason or "mode overlay diminta"))
     return {
         "job": job,
-        "downloadUrl": _file_url(job + "/" + out_name),
-        "durationSec": int(round(final_dur if final_dur > 0 else adur)),
-        "lipsyncApplied": lipsync_applied,
-        "reason": reason,
+        "status": "processing",
+        "statusUrl": _status_url(job),
+        "downloadUrl": "",
+        "lipsyncApplied": False,
+        "reason": "",
     }
+
+
+@router.get("/lipsync-result/{job}")
+def lipsync_result(job: str, authorization: Optional[str] = Header(default=None)):
+    """Polling status job remake."""
+    _check_auth(authorization)
+    st = _get_job(job)
+    if st is None:
+        raise HTTPException(status_code=404, detail="Job tidak ditemukan: " + str(job))
+    out = {"job": job}
+    out.update(st)
+    return out
