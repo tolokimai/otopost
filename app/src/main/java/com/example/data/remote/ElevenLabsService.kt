@@ -38,6 +38,10 @@ class ElevenLabsService(
 
     private val jsonType = "application/json; charset=utf-8".toMediaType()
 
+    /** Pesan error terakhir (status HTTP / body) agar UI bisa menampilkan sebab sebenarnya. */
+    var lastError: String? = null
+        private set
+
     fun isConfigured(): Boolean = getApiKey().trim().isNotBlank()
 
     /**
@@ -52,10 +56,11 @@ class ElevenLabsService(
         stability: Double = 0.5,
         similarityBoost: Double = 0.75
     ): SynthesizedVoice? = withContext(Dispatchers.IO) {
+        lastError = null
         val key = getApiKey().trim()
-        if (key.isBlank()) return@withContext null
+        if (key.isBlank()) { lastError = "API key kosong"; return@withContext null }
         val cleanText = text.trim()
-        if (cleanText.isBlank()) return@withContext null
+        if (cleanText.isBlank()) { lastError = "Naskah kosong"; return@withContext null }
         try {
             val voice = voiceId.trim().ifBlank { DEFAULT_VOICE_ID }
             val model = modelId.trim().ifBlank { DEFAULT_MODEL_ID }
@@ -75,7 +80,10 @@ class ElevenLabsService(
                 .post(payload.toString().toRequestBody(jsonType))
                 .build()
             client.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) return@withContext null
+                if (!resp.isSuccessful) {
+                    lastError = "HTTP " + resp.code + ": " + (resp.body?.string()?.take(300) ?: resp.message)
+                    return@withContext null
+                }
                 val bytes = resp.body?.bytes() ?: return@withContext null
                 if (bytes.isEmpty()) return@withContext null
                 val outDir = File(context.cacheDir, "remake_audio")
@@ -89,6 +97,7 @@ class ElevenLabsService(
                 )
             }
         } catch (e: Exception) {
+            lastError = "Error: " + (e.message ?: "tidak diketahui")
             null
         }
     }
@@ -103,8 +112,9 @@ class ElevenLabsService(
 
     /** Ambil daftar voice yang tersedia di akun (opsional, untuk pemilihan suara di UI). */
     suspend fun listVoices(): List<Pair<String, String>> = withContext(Dispatchers.IO) {
+        lastError = null
         val key = getApiKey().trim()
-        if (key.isBlank()) return@withContext emptyList()
+        if (key.isBlank()) { lastError = "API key kosong"; return@withContext emptyList() }
         try {
             val req = Request.Builder()
                 .url(BASE_URL + "/voices")
@@ -113,7 +123,10 @@ class ElevenLabsService(
                 .build()
             client.newCall(req).execute().use { resp ->
                 val body = resp.body?.string() ?: return@withContext emptyList()
-                if (!resp.isSuccessful) return@withContext emptyList()
+                if (!resp.isSuccessful) {
+                    lastError = "HTTP " + resp.code + ": " + body.take(300)
+                    return@withContext emptyList()
+                }
                 val arr = JSONObject(body).optJSONArray("voices") ?: return@withContext emptyList()
                 (0 until arr.length()).mapNotNull { i ->
                     val o = arr.optJSONObject(i) ?: return@mapNotNull null
@@ -123,6 +136,7 @@ class ElevenLabsService(
                 }
             }
         } catch (e: Exception) {
+            lastError = "Error: " + (e.message ?: "tidak diketahui")
             emptyList()
         }
     }
