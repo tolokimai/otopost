@@ -10,6 +10,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -68,12 +69,15 @@ class ClipServerService(
     private val getToken: () -> String = { "" }
 ) {
     // Timeout longgar: proses server (download HD + potong + reframe + subtitle + lipsync) bisa lama.
+    // protocols = HTTP/1.1 saja: mencegah "stream was reset: PROTOCOL_ERROR" (kegagalan multiplexing
+    // HTTP/2) yang sering muncul saat upload multipart menembus proxy/Cloudflare.
     private val client = OkHttpClient.Builder()
         .connectTimeout(60, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.MINUTES)
         .writeTimeout(10, TimeUnit.MINUTES)
         .callTimeout(0, TimeUnit.MILLISECONDS)
         .retryOnConnectionFailure(true)
+        .protocols(listOf(Protocol.HTTP_1_1))
         .build()
 
     private val jsonType = "application/json; charset=utf-8".toMediaType()
@@ -207,6 +211,9 @@ class ClipServerService(
      * kind: "video" | "photo" | "audio".
      * Return UploadedMedia (mediaId + url) atau null bila gagal.
      *
+     * Tahan-banting: retry otomatis (maks 3x) untuk gangguan sesaat seperti stream HTTP di-reset
+     * (PROTOCOL_ERROR) atau koneksi putus. Client sudah dipaksa HTTP/1.1 untuk mencegahnya.
+     *
      * Endpoint server (WAJIB diimplementasikan di sisi server, karena server bisa dimodifikasi):
      *   POST /upload  (multipart/form-data)
      *     field "file" = berkas biner, field "kind" = jenis media.
@@ -215,38 +222,56 @@ class ClipServerService(
     suspend fun uploadMedia(file: File, kind: String): UploadedMedia? = withContext(Dispatchers.IO) {
         lastError = null
         if (!file.exists()) { lastError = "File tidak ditemukan: " + file.name; return@withContext null }
-        try {
-            val mime = when (kind) {
-                "audio" -> "audio/mpeg"
-                "photo" -> "image/*"
-                else -> "video/*"
-            }
-            val body = MultipartBody.Builder()
-                .setType(MultipartBody.FORM)
-                .addFormDataPart("kind", kind)
-                .addFormDataPart("file", file.name, file.asRequestBody(mime.toMediaType()))
-                .build()
-            val req = authed(base() + "/upload").post(body).build()
-            client.newCall(req).execute().use { resp ->
-                val respBody = resp.body?.string()
-                if (!resp.isSuccessful) {
-                    lastError = "HTTP " + resp.code + ": " + (respBody?.take(300) ?: resp.message)
-                    return@withContext null
-                }
-                if (respBody == null) { lastError = "Respon upload kosong dari server."; return@withContext null }
-                val o = JSONObject(respBody)
-                val id = o.optString("mediaId")
-                val url = o.optString("url")
-                if (id.isBlank() && url.isBlank()) { lastError = "Server tidak mengembalikan mediaId."; return@withContext null }
-                UploadedMedia(id, url)
-            }
-        } catch (e: java.net.SocketTimeoutException) {
-            lastError = "Timeout saat upload (jaringan lambat / file besar). Coba lagi."
-            null
-        } catch (e: Exception) {
-            lastError = "Error upload: " + (e.message ?: "tidak diketahui")
-            null
+        val mime = when (kind) {
+            "audio" -> "audio/mpeg"
+            "photo" -> "image/*"
+            else -> "video/*"
         }
+        val maxAttempts = 3
+        var attempt = 0
+        while (attempt < maxAttempts) {
+            attempt++
+            try {
+                val body = MultipartBody.Builder()
+                    .setType(MultipartBody.FORM)
+                    .addFormDataPart("kind", kind)
+                    .addFormDataPart("file", file.name, file.asRequestBody(mime.toMediaType()))
+                    .build()
+                val req = authed(base() + "/upload").post(body).build()
+                client.newCall(req).execute().use { resp ->
+                    val respBody = resp.body?.string()
+                    if (!resp.isSuccessful) {
+                        val hint = when (resp.code) {
+                            413 -> " (file terlalu besar — proxy/Cloudflare free biasanya batasi ~100 MB; kecilkan/kompres file)"
+                            502, 503, 504 -> " (server/proxy sibuk atau timeout — coba lagi)"
+                            401, 403 -> " (token server salah / kurang izin)"
+                            else -> ""
+                        }
+                        lastError = "HTTP " + resp.code + hint + ": " + (respBody?.take(300) ?: resp.message)
+                        return@withContext null
+                    }
+                    if (respBody == null) { lastError = "Respon upload kosong dari server."; return@withContext null }
+                    val o = JSONObject(respBody)
+                    val id = o.optString("mediaId")
+                    val url = o.optString("url")
+                    if (id.isBlank() && url.isBlank()) { lastError = "Server tidak mengembalikan mediaId."; return@withContext null }
+                    return@withContext UploadedMedia(id, url)
+                }
+            } catch (e: java.net.SocketTimeoutException) {
+                lastError = "Timeout saat upload (jaringan lambat / file besar). Coba lagi."
+                return@withContext null
+            } catch (e: java.io.IOException) {
+                // Termasuk StreamResetException (PROTOCOL_ERROR) & koneksi putus -> layak diulang.
+                val msg = e.message ?: "gangguan jaringan"
+                lastError = "Koneksi upload terganggu (" + msg + ") — percobaan " + attempt + "/" + maxAttempts + "."
+                if (attempt >= maxAttempts) return@withContext null
+                kotlinx.coroutines.delay(1500L * attempt)
+            } catch (e: Exception) {
+                lastError = "Error upload: " + (e.message ?: "tidak diketahui")
+                return@withContext null
+            }
+        }
+        null
     }
 
     /**
