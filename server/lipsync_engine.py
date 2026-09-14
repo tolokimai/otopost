@@ -1,16 +1,24 @@
 """
-TRUE lip-sync engine opsional (Wav2Lip) — dioptimalkan untuk GPU 8GB (mis. RTX 4060).
+Mesin lip-sync OtoPost dengan PILIHAN BACKEND (Wav2Lip / MuseTalk) + enhancer GFPGAN.
 
-Aktif hanya bila SEMUA terpenuhi:
+PILIH BACKEND lewat env LIPSYNC_BACKEND:
+- "wav2lip" (DEFAULT) : cepat, ringan, tapi mulut 96x96 (buram, cenderung buka-tutup).
+- "musetalk"          : MuseTalk 1.5, wajah 256x256 di latent space -> jauh lebih
+                        membentuk kata, tajam, minim glitch. Butuh clone MuseTalk +
+                        weights (lihat musetalk_engine.py). Cocok RTX 4060 (fp16).
+
+Apapun backend-nya, /lipsync SELALU fail-safe: bila backend belum siap / gagal,
+otomatis fallback ke overlay suara (tetap menghasilkan video dgn suara baru).
+Hasil kedua backend bisa DIPERHALUS lagi oleh GFPGAN (ENABLE_ENHANCE, langkah kedua).
+
+Gunakan status() / endpoint GET /lipsync-status untuk mendiagnosis apa yang kurang.
+
+===================== BACKEND WAV2LIP =====================
+Aktif (sebagai backend wav2lip) hanya bila SEMUA terpenuhi:
 - ENABLE_WAV2LIP = 1 (atau true/yes/on)
 - WAV2LIP_DIR    = path folder clone repo Wav2Lip (berisi inference.py)
 - WAV2LIP_CKPT   = path checkpoint (mis. .../checkpoints/wav2lip_gan.pth)
 - python (WAV2LIP_PYTHON, default "python") punya PyTorch terpasang
-
-Bila salah satu belum siap, run_wav2lip() mengembalikan False sehingga /lipsync
-otomatis fallback ke overlay suara (tetap menghasilkan video dengan suara baru).
-
-Gunakan status() / endpoint GET /lipsync-status untuk mendiagnosis apa yang kurang.
 
 KONFIGURASI PERFORMA (semua ADA DEFAULT aman untuk RTX 4060 / VRAM 8GB).
 Ubah lewat environment variable SEBELUM start server:
@@ -35,10 +43,14 @@ KUALITAS / NATURAL (diteruskan ke inference.py; semua ADA DEFAULT):
 - WAV2LIP_SILENCE_DB      (default -38)   ambang dB hening.
 - WAV2LIP_MIN_SILENCE_MS  (default 120)   durasi minimum hening (ms) agar mulut dibekukan.
 
-FACE ENHANCER (GFPGAN) — LANGKAH KEDUA pasca Wav2Lip (semua ADA DEFAULT):
-Wav2Lip hanya meng-generate mulut 96x96 (buram). GFPGAN merestorasi wajah tiap frame
-agar mulut lebih tajam & menyatu -> hasil jauh lebih natural. Butuh enhance.py + model
-GFPGANv1.4.pth di mesin. Bila belum ada, langkah ini otomatis DILEWATI (aman).
+===================== BACKEND MUSETALK =====================
+Setel LIPSYNC_BACKEND=musetalk lalu isi MUSETALK_DIR (+ weights). Semua knob ada di
+musetalk_engine.py (MUSETALK_PYTHON, MUSETALK_FP16, MUSETALK_BATCH_SIZE, dst).
+
+===================== FACE ENHANCER (GFPGAN) =====================
+LANGKAH KEDUA pasca lipsync (berlaku untuk KEDUA backend; semua ADA DEFAULT).
+Merestorasi wajah tiap frame agar mulut lebih tajam & menyatu. Butuh enhance.py +
+model GFPGANv1.4.pth. Bila belum ada, langkah ini otomatis DILEWATI (aman).
 - ENABLE_ENHANCE           (default 1)   1=perhalus hasil dgn GFPGAN bila siap.
 - ENHANCE_SCRIPT           (default <WAV2LIP_DIR>/enhance.py)  path skrip enhance.py.
 - GFPGAN_MODEL             (default <WAV2LIP_DIR>/gfpgan/GFPGANv1.4.pth)  path model GFPGAN.
@@ -49,10 +61,7 @@ GFPGANv1.4.pth di mesin. Bila belum ada, langkah ini otomatis DILEWATI (aman).
 - ENHANCE_CRF              (default 18)  kualitas encode akhir (kecil=lebih tajam/berat).
 - ENHANCE_TIMEOUT_SEC      (default 1200) batas waktu proses enhancer.
 
-Catatan: Wav2Lip bisa menganimasikan bibir dari VIDEO wajah maupun dari FOTO diam
-(inference.py otomatis mode statis bila --face berupa gambar).
-
-GPU di-serialkan: hanya 1 proses (Wav2Lip ATAU enhancer) berjalan pada satu waktu
+GPU di-serialkan: hanya 1 proses (lipsync ATAU enhancer) berjalan pada satu waktu
 (mencegah dua job rebutan VRAM -> CUDA out of memory). Job berikutnya otomatis mengantre.
 Aman berbagi GPU dengan proses lain (mis. camerad/NLU/SBERT) karena akses di-serialkan.
 """
@@ -60,7 +69,9 @@ import os
 import subprocess
 import threading
 
-# Kunci global GPU: cegah 2 proses Wav2Lip jalan bersamaan (penyebab utama CUDA OOM).
+import musetalk_engine
+
+# Kunci global GPU: cegah 2 proses berat jalan bersamaan (penyebab utama CUDA OOM).
 _GPU_LOCK = threading.Lock()
 
 
@@ -84,11 +95,18 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def backend() -> str:
+    """Backend lipsync aktif: "wav2lip" (default) atau "musetalk"."""
+    b = _env("LIPSYNC_BACKEND", "wav2lip").strip().lower()
+    return b if b in ("wav2lip", "musetalk") else "wav2lip"
+
+
 def enabled() -> bool:
     return _env("ENABLE_WAV2LIP", "").lower() in ("1", "true", "yes", "on")
 
 
-def is_ready() -> bool:
+def wav2lip_ready() -> bool:
+    """Kesiapan khusus backend Wav2Lip (tanpa melihat LIPSYNC_BACKEND)."""
     if not enabled():
         return False
     wav2lip_dir = _env("WAV2LIP_DIR")
@@ -98,6 +116,13 @@ def is_ready() -> bool:
     if not ckpt or not os.path.exists(ckpt):
         return False
     return os.path.exists(os.path.join(wav2lip_dir, "inference.py"))
+
+
+def is_ready() -> bool:
+    """Kesiapan backend AKTIF (dipakai remake.py untuk memutuskan TRUE lipsync)."""
+    if backend() == "musetalk":
+        return musetalk_engine.ready()
+    return wav2lip_ready()
 
 
 def enhance_enabled() -> bool:
@@ -188,7 +213,9 @@ def status() -> dict:
     ckpt = _env("WAV2LIP_CKPT")
     python_bin = _env("WAV2LIP_PYTHON", "python")
     inference = os.path.join(wav2lip_dir, "inference.py") if wav2lip_dir else ""
+    active = backend()
     st = {
+        "backend": active,
         "enabled": enabled(),
         "wav2lipDir": wav2lip_dir,
         "wav2lipDirExists": bool(wav2lip_dir) and os.path.isdir(wav2lip_dir),
@@ -198,24 +225,38 @@ def status() -> dict:
         "pythonBin": python_bin,
         "extraArgs": _env("WAV2LIP_EXTRA_ARGS", ""),
         "config": config(),
+        "wav2lipReady": wav2lip_ready(),
+        "musetalk": musetalk_engine.status(),
         "ready": is_ready(),
         "enhanceReady": enhance_ready(),
     }
     st["torch"] = _torch_check(python_bin)
     # Ringkasan tindakan bila belum siap
     hints = []
-    if not st["enabled"]:
-        hints.append("Set ENABLE_WAV2LIP=1 SEBELUM start server (di proses yang sama).")
-    if not st["wav2lipDirExists"]:
-        hints.append("WAV2LIP_DIR belum menunjuk ke folder clone Wav2Lip yang valid.")
-    elif not st["inferenceExists"]:
-        hints.append("inference.py tidak ada di WAV2LIP_DIR.")
-    if not st["checkpointExists"]:
-        hints.append("WAV2LIP_CKPT (wav2lip_gan.pth) tidak ditemukan.")
-    if not st["torch"].get("importOk"):
-        hints.append("PyTorch tidak bisa di-import oleh pythonBin. Set WAV2LIP_PYTHON ke python venv yang ada torch.")
-    elif not st["torch"].get("cudaAvailable"):
-        hints.append("CUDA tidak terdeteksi -> jalan di CPU (lambat). Install torch build cu121 untuk pakai RTX 4060.")
+    if active == "musetalk":
+        if not musetalk_engine.ready():
+            hints += musetalk_engine.status().get("hints", [])
+            hints.append("Set MUSETALK_DIR + weights, atau ganti LIPSYNC_BACKEND=wav2lip.")
+        mt_py = musetalk_engine.status().get("python", "python")
+        mt_torch = _torch_check(mt_py)
+        st["musetalkTorch"] = mt_torch
+        if not mt_torch.get("importOk"):
+            hints.append("MUSETALK_PYTHON tidak bisa import torch. Arahkan ke venv MuseTalk.")
+        elif not mt_torch.get("cudaAvailable"):
+            hints.append("CUDA tak terdeteksi di venv MuseTalk -> lambat (CPU).")
+    else:
+        if not st["enabled"]:
+            hints.append("Set ENABLE_WAV2LIP=1 SEBELUM start server (di proses yang sama).")
+        if not st["wav2lipDirExists"]:
+            hints.append("WAV2LIP_DIR belum menunjuk ke folder clone Wav2Lip yang valid.")
+        elif not st["inferenceExists"]:
+            hints.append("inference.py tidak ada di WAV2LIP_DIR.")
+        if not st["checkpointExists"]:
+            hints.append("WAV2LIP_CKPT (wav2lip_gan.pth) tidak ditemukan.")
+        if not st["torch"].get("importOk"):
+            hints.append("PyTorch tidak bisa di-import oleh pythonBin. Set WAV2LIP_PYTHON ke python venv yang ada torch.")
+        elif not st["torch"].get("cudaAvailable"):
+            hints.append("CUDA tidak terdeteksi -> jalan di CPU (lambat). Install torch build cu121 untuk pakai RTX 4060.")
     # Enhancer (GFPGAN)
     cfg = st["config"]
     if cfg.get("enhanceEnabled") and not cfg.get("enhanceReady"):
@@ -304,8 +345,8 @@ def run_enhance(in_path: str, out_path: str) -> bool:
 
 
 def _maybe_enhance(out_path: str) -> None:
-    """Langkah kedua opsional: perhalus hasil Wav2Lip dgn GFPGAN bila siap.
-    Selalu fail-safe: bila gagal, hasil Wav2Lip apa adanya tetap dipakai."""
+    """Langkah kedua opsional: perhalus hasil lipsync dgn GFPGAN bila siap.
+    Selalu fail-safe: bila gagal, hasil lipsync apa adanya tetap dipakai."""
     if not enhance_enabled():
         return
     if not enhance_ready():
@@ -324,7 +365,7 @@ def _maybe_enhance(out_path: str) -> None:
             except Exception:
                 pass
     else:
-        print("Enhancer: gagal/dilewati, pakai hasil Wav2Lip apa adanya.")
+        print("Enhancer: gagal/dilewati, pakai hasil lipsync apa adanya.")
         try:
             if os.path.isfile(tmp):
                 os.remove(tmp)
@@ -332,12 +373,27 @@ def _maybe_enhance(out_path: str) -> None:
             pass
 
 
+def run_lipsync(face_path: str, audio: str, out_path: str) -> bool:
+    """Dispatcher: jalankan backend lipsync AKTIF (wav2lip/musetalk) lalu (opsional)
+    perhalus dengan GFPGAN. Return True bila output lipsync berhasil dibuat.
+    face_path boleh video ATAU gambar (foto diam)."""
+    if backend() == "musetalk":
+        ok = musetalk_engine.run(face_path, audio, out_path, gpu_lock=_GPU_LOCK)
+        if not ok:
+            return False
+        # Langkah 2 (opsional): perhalus wajah/mulut dgn GFPGAN (fail-safe).
+        _maybe_enhance(out_path)
+        return True
+    # Default: Wav2Lip (sudah memanggil _maybe_enhance di dalamnya).
+    return run_wav2lip(face_path, audio, out_path)
+
+
 def run_wav2lip(face_path: str, audio: str, out_path: str) -> bool:
     """Jalankan Wav2Lip. face_path boleh berupa video ATAU gambar (foto diam).
     Return True bila output berhasil dibuat."""
-    if not is_ready():
+    if not wav2lip_ready():
         print("Wav2Lip: BELUM SIAP (enabled=%s, ready=%s). Cek GET /lipsync-status."
-              % (enabled(), is_ready()))
+              % (enabled(), wav2lip_ready()))
         return False
     wav2lip_dir = _env("WAV2LIP_DIR")
     ckpt = _env("WAV2LIP_CKPT")

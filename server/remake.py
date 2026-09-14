@@ -17,7 +17,8 @@ Aturan durasi (SUARA = acuan utama):
 - Video lebih panjang dari audio -> dipotong mengikuti panjang audio
 
 TRUE lipsync (gerak bibir mengikuti kata baru) untuk FOTO maupun VIDEO aktif hanya
-bila Wav2Lip siap (ENABLE_WAV2LIP=1 + WAV2LIP_DIR + WAV2LIP_CKPT + torch). Bila tidak,
+bila backend lipsync siap (Wav2Lip: ENABLE_WAV2LIP=1 + WAV2LIP_DIR + WAV2LIP_CKPT + torch;
+atau MuseTalk: LIPSYNC_BACKEND=musetalk + MUSETALK_DIR + weights). Bila tidak,
 otomatis fallback: foto -> Ken Burns + suara, video -> overlay suara (bibir lama).
 
 EFISIENSI GPU: frame wajah yang dikirim ke Wav2Lip dibatasi tingginya
@@ -281,7 +282,7 @@ def _process_remake(job, media, audio, kind, want_lipsync, scale, face_scale, ad
     reason = ""
     ok = False
     try:
-        # ---- Coba TRUE lipsync (foto ATAU video) bila diminta & Wav2Lip siap ----
+        # ---- Coba TRUE lipsync (foto ATAU video) bila diminta & backend siap ----
         if want_lipsync and lipsync_engine.is_ready():
             try:
                 if kind == "photo":
@@ -291,18 +292,19 @@ def _process_remake(job, media, audio, kind, want_lipsync, scale, face_scale, ad
                     face = os.path.join(tmp, "face.mp4")
                     built = _scale_to_aspect(media, face_scale, face)
                 if not built:
-                    reason = "Gagal menyiapkan input wajah untuk Wav2Lip (cek ffmpeg)."
-                elif lipsync_engine.run_wav2lip(face, audio, out_path):
+                    reason = "Gagal menyiapkan input wajah untuk lipsync (cek ffmpeg)."
+                elif lipsync_engine.run_lipsync(face, audio, out_path):
                     lipsync_applied = True
                     ok = True
                 else:
-                    reason = "Wav2Lip tidak menghasilkan output (cek log server / wajah tidak terdeteksi / VRAM)."
+                    reason = ("Backend lipsync (%s) tidak menghasilkan output (cek log server / "
+                              "wajah tidak terdeteksi / VRAM)." % lipsync_engine.backend())
             except Exception as e:
-                reason = "Wav2Lip error: " + str(e)
+                reason = "Lipsync error: " + str(e)
                 print("WARNING:", reason)
         elif want_lipsync and not lipsync_engine.is_ready():
-            reason = ("Wav2Lip belum siap (enabled=%s). Buka GET /lipsync-status untuk detail."
-                      % lipsync_engine.enabled())
+            reason = ("Backend lipsync (%s) belum siap. Buka GET /lipsync-status untuk detail."
+                      % lipsync_engine.backend())
 
         # ---- Fallback (tanpa gerak bibir) ----
         if not ok:
