@@ -259,9 +259,10 @@ class ClipServerService(
      *   - Video lebih panjang dari audio -> dipotong mengikuti panjang audio.
      *
      * Endpoint server (WAJIB diimplementasikan di sisi server):
-     *   POST /lipsync  (application/json)
+     *   POST /lipsync  (application/json)  -> MULAI job async: balas { "job": "...", "status": "processing" }
      *     { "mediaId", "mediaKind", "audioId", "mode", "aspectRatio", "subtitle", "subtitleStyle" }
-     *   Respon JSON: { "downloadUrl": "...", "durationSec": n }
+     *   GET  /lipsync-result/{job}  -> { "status": "processing|done|error", "downloadUrl"?, "durationSec"?, "reason"? }
+     *   (Kompat: bila server lama langsung balas downloadUrl pada POST /lipsync, tetap dipakai.)
      */
     suspend fun requestRemake(
         mediaId: String,
@@ -282,17 +283,19 @@ class ClipServerService(
                 .put("aspectRatio", aspectRatio)
                 .put("subtitle", subtitle)
                 .put("subtitleStyle", subtitleStyle)
-            val req = authed(base() + "/lipsync")
+            // 1) MULAI job (balas cepat -> tidak kena timeout proxy 524)
+            val startReq = authed(base() + "/lipsync")
                 .post(payload.toString().toRequestBody(jsonType))
                 .build()
-            client.newCall(req).execute().use { resp ->
+            var job = ""
+            client.newCall(startReq).execute().use { resp ->
                 val body = resp.body?.string()
                 if (!resp.isSuccessful) {
                     val hint = when (resp.code) {
-                        502, 503, 504 -> " (server/proxy timeout — proses lipsync mungkin masih jalan di server; perpanjang timeout proxy atau coba lagi beberapa menit)"
+                        502, 503, 504 -> " (server/proxy timeout — perpanjang timeout proxy / coba lagi)"
                         413 -> " (file terlalu besar untuk server)"
                         401, 403 -> " (token server salah / kurang izin)"
-                        404 -> " (endpoint /lipsync tidak ditemukan — cek URL server)"
+                        404 -> " (endpoint /lipsync tidak ditemukan — update server ke versi async)"
                         else -> ""
                     }
                     lastError = "HTTP " + resp.code + hint + ": " + (body?.take(300) ?: resp.message)
@@ -300,14 +303,57 @@ class ClipServerService(
                 }
                 if (body == null) { lastError = "Respon kosong dari server."; return@withContext null }
                 val o = JSONObject(body)
-                val dl = o.optString("downloadUrl")
-                if (dl.isBlank()) {
-                    val reason = o.optString("reason").ifBlank { o.optString("error") }
-                    lastError = if (reason.isNotBlank()) "Server: " + reason else "Server tidak mengembalikan downloadUrl."
-                    return@withContext null
+                // Kompat: server lama langsung membalas downloadUrl (sinkron).
+                val directDl = o.optString("downloadUrl")
+                if (directDl.isNotBlank()) {
+                    return@withContext RemakeResult(directDl, o.optInt("durationSec", 0))
                 }
-                RemakeResult(dl, o.optInt("durationSec", 0))
+                job = o.optString("job")
             }
+            if (job.isBlank()) {
+                lastError = "Server tidak mengembalikan job id (update server ke versi async)."
+                return@withContext null
+            }
+
+            // 2) POLLING status job: banyak request pendek -> aman dari 524/timeout.
+            val deadlineMs = System.currentTimeMillis() + 30L * 60L * 1000L
+            var result: RemakeResult? = null
+            var stop = false
+            while (!stop && System.currentTimeMillis() < deadlineMs) {
+                kotlinx.coroutines.delay(3000L)
+                val pollReq = authed(base() + "/lipsync-result/" + job).get().build()
+                client.newCall(pollReq).execute().use { resp ->
+                    val body = resp.body?.string()
+                    when {
+                        resp.code == 404 -> { lastError = "Job tidak ditemukan (server mungkin restart)."; stop = true }
+                        !resp.isSuccessful -> { lastError = "HTTP " + resp.code + ": " + (body?.take(200) ?: resp.message); stop = true }
+                        body == null -> { lastError = "Respon status kosong dari server."; stop = true }
+                        else -> {
+                            val o = JSONObject(body)
+                            when (o.optString("status")) {
+                                "done" -> {
+                                    val dl = o.optString("downloadUrl")
+                                    if (dl.isBlank()) {
+                                        lastError = o.optString("reason").ifBlank { "Server tidak mengembalikan downloadUrl." }
+                                    } else {
+                                        result = RemakeResult(dl, o.optInt("durationSec", 0))
+                                    }
+                                    stop = true
+                                }
+                                "error" -> {
+                                    lastError = o.optString("reason").ifBlank { o.optString("detail").ifBlank { "Server gagal memproses remake." } }
+                                    stop = true
+                                }
+                                else -> { /* processing: lanjut polling */ }
+                            }
+                        }
+                    }
+                }
+            }
+            if (result == null && lastError == null) {
+                lastError = "Timeout menunggu hasil (>30 menit)."
+            }
+            result
         } catch (e: java.net.SocketTimeoutException) {
             lastError = "Timeout: server masih memproses / koneksi putus sebelum selesai. Video panjang bisa perlu >30 menit."
             null
