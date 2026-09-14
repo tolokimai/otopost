@@ -18,6 +18,10 @@ FAIL-SAFE: bila GFPGAN/basicsr belum terpasang atau error, skrip keluar dengan
 kode !=0 dan TIDAK menulis output; server otomatis memakai video Wav2Lip apa adanya
 (kualitas lama), jadi pipeline tidak pernah rusak.
 
+PENTING (perbaikan deadlock): stderr ffmpeg diarahkan ke file log, TIDAK ke PIPE.
+Menyimpan stderr sebagai PIPE tanpa dibaca membuat buffer penuh -> ffmpeg berhenti
+membaca stdin -> penulisan frame macet -> proses idle (CPU/GPU ~0%) sampai timeout.
+
 CATATAN torch/torchvision baru (>=0.17): basicsr sering gagal import
 'torchvision.transforms.functional_tensor'. Perbaiki 1 baris di file:
   <venv>/Lib/site-packages/basicsr/data/degradations.py
@@ -85,6 +89,7 @@ def main():
             arch="clean",
             channel_multiplier=2,
             bg_upsampler=None,  # hemat VRAM: latar tidak di-upscale
+            device=torch.device(device),
         )
     except Exception as e:
         log("gagal inisialisasi GFPGANer:", e)
@@ -97,8 +102,12 @@ def main():
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     if fps <= 0:
         fps = 30.0
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    log("mulai proses", total, "frame @", round(fps, 3), "fps")
 
     ff = None
+    ff_log = None
+    ff_log_path = None
     w = h = None
     n = 0
     enhanced = 0
@@ -108,6 +117,8 @@ def main():
             if not ok:
                 break
             n += 1
+            if n % 25 == 0:
+                log("progress:", n, "/", total, "frame (enhanced=%d)" % enhanced)
             out_frame = frame
             try:
                 _, _, restored = restorer.enhance(
@@ -134,8 +145,13 @@ def main():
 
             if ff is None:
                 h, w = out_frame.shape[:2]
+                ff_log_path = args.output + ".fflog.txt"
+                try:
+                    ff_log = open(ff_log_path, "wb")
+                except Exception:
+                    ff_log = subprocess.DEVNULL
                 cmd = [
-                    "ffmpeg", "-y",
+                    "ffmpeg", "-y", "-loglevel", "error", "-nostats",
                     "-f", "rawvideo", "-pix_fmt", "bgr24",
                     "-s", str(w) + "x" + str(h), "-r", str(fps), "-i", "pipe:0",
                     "-i", args.input,
@@ -144,49 +160,69 @@ def main():
                     "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
                     "-movflags", "+faststart", "-shortest", args.output,
                 ]
+                # stderr -> file log (BUKAN pipe) supaya tidak deadlock.
                 ff = subprocess.Popen(cmd, stdin=subprocess.PIPE,
                                       stdout=subprocess.DEVNULL,
-                                      stderr=subprocess.PIPE)
+                                      stderr=ff_log)
             else:
                 if out_frame.shape[0] != h or out_frame.shape[1] != w:
                     out_frame = cv2.resize(out_frame, (w, h))
             try:
                 ff.stdin.write(out_frame.tobytes())
-            except Exception as e:
-                log("gagal menulis frame ke ffmpeg:", e)
+            except (BrokenPipeError, OSError) as e:
+                log("ffmpeg menutup pipe lebih awal:", e)
                 break
     finally:
         cap.release()
 
+    def _read_fflog():
+        try:
+            if ff_log_path and os.path.isfile(ff_log_path):
+                with open(ff_log_path, "r", errors="ignore") as f:
+                    return f.read()[-500:]
+        except Exception:
+            pass
+        return ""
+
+    def _close_fflog():
+        try:
+            if ff_log and ff_log is not subprocess.DEVNULL:
+                ff_log.close()
+        except Exception:
+            pass
+
     if ff is None or n == 0:
+        _close_fflog()
         log("tidak ada frame terbaca / ffmpeg tidak start")
         return 8
     if enhanced == 0:
-        log("tidak ada wajah yang berhasil di-enhance (0 frame). Batalkan.")
         try:
             ff.stdin.close()
-            ff.wait(timeout=30)
+            ff.wait(timeout=60)
         except Exception:
             pass
+        _close_fflog()
         try:
             if os.path.isfile(args.output):
                 os.remove(args.output)
         except Exception:
             pass
+        log("tidak ada wajah yang berhasil di-enhance (0 frame). Batalkan.")
         return 9
     try:
         ff.stdin.close()
     except Exception:
         pass
     ret = ff.wait()
+    _close_fflog()
     if ret != 0:
-        err = b""
-        try:
-            err = ff.stderr.read() or b""
-        except Exception:
-            pass
-        log("ffmpeg gagal:", err.decode(errors="ignore")[:400])
+        log("ffmpeg gagal (rc %s):" % ret, _read_fflog())
         return 10
+    try:
+        if ff_log_path and os.path.isfile(ff_log_path):
+            os.remove(ff_log_path)
+    except Exception:
+        pass
     log("selesai:", args.output, "frame:", n, "enhanced:", enhanced)
     return 0
 
