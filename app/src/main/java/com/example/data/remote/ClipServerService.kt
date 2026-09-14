@@ -70,13 +70,17 @@ class ClipServerService(
     // Timeout longgar: proses server (download HD + potong + reframe + subtitle + lipsync) bisa lama.
     private val client = OkHttpClient.Builder()
         .connectTimeout(60, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.MINUTES)
+        .readTimeout(30, TimeUnit.MINUTES)
         .writeTimeout(10, TimeUnit.MINUTES)
         .callTimeout(0, TimeUnit.MILLISECONDS)
         .retryOnConnectionFailure(true)
         .build()
 
     private val jsonType = "application/json; charset=utf-8".toMediaType()
+
+    /** Pesan error terakhir (status HTTP / body / timeout) agar UI bisa menampilkan sebab sebenarnya. */
+    var lastError: String? = null
+        private set
 
     fun isConfigured(): Boolean = getBaseUrl().trim().isNotBlank()
 
@@ -209,7 +213,8 @@ class ClipServerService(
      *   Respon JSON: { "mediaId": "...", "url": "..." }
      */
     suspend fun uploadMedia(file: File, kind: String): UploadedMedia? = withContext(Dispatchers.IO) {
-        if (!file.exists()) return@withContext null
+        lastError = null
+        if (!file.exists()) { lastError = "File tidak ditemukan: " + file.name; return@withContext null }
         try {
             val mime = when (kind) {
                 "audio" -> "audio/mpeg"
@@ -223,15 +228,23 @@ class ClipServerService(
                 .build()
             val req = authed(base() + "/upload").post(body).build()
             client.newCall(req).execute().use { resp ->
-                val respBody = resp.body?.string() ?: return@withContext null
-                if (!resp.isSuccessful) return@withContext null
+                val respBody = resp.body?.string()
+                if (!resp.isSuccessful) {
+                    lastError = "HTTP " + resp.code + ": " + (respBody?.take(300) ?: resp.message)
+                    return@withContext null
+                }
+                if (respBody == null) { lastError = "Respon upload kosong dari server."; return@withContext null }
                 val o = JSONObject(respBody)
                 val id = o.optString("mediaId")
                 val url = o.optString("url")
-                if (id.isBlank() && url.isBlank()) return@withContext null
+                if (id.isBlank() && url.isBlank()) { lastError = "Server tidak mengembalikan mediaId."; return@withContext null }
                 UploadedMedia(id, url)
             }
+        } catch (e: java.net.SocketTimeoutException) {
+            lastError = "Timeout saat upload (jaringan lambat / file besar). Coba lagi."
+            null
         } catch (e: Exception) {
+            lastError = "Error upload: " + (e.message ?: "tidak diketahui")
             null
         }
     }
@@ -259,6 +272,7 @@ class ClipServerService(
         subtitle: Boolean = false,
         subtitleStyle: String = "clean"
     ): RemakeResult? = withContext(Dispatchers.IO) {
+        lastError = null
         try {
             val payload = JSONObject()
                 .put("mediaId", mediaId)
@@ -272,14 +286,36 @@ class ClipServerService(
                 .post(payload.toString().toRequestBody(jsonType))
                 .build()
             client.newCall(req).execute().use { resp ->
-                val body = resp.body?.string() ?: return@withContext null
-                if (!resp.isSuccessful) return@withContext null
+                val body = resp.body?.string()
+                if (!resp.isSuccessful) {
+                    val hint = when (resp.code) {
+                        502, 503, 504 -> " (server/proxy timeout — proses lipsync mungkin masih jalan di server; perpanjang timeout proxy atau coba lagi beberapa menit)"
+                        413 -> " (file terlalu besar untuk server)"
+                        401, 403 -> " (token server salah / kurang izin)"
+                        404 -> " (endpoint /lipsync tidak ditemukan — cek URL server)"
+                        else -> ""
+                    }
+                    lastError = "HTTP " + resp.code + hint + ": " + (body?.take(300) ?: resp.message)
+                    return@withContext null
+                }
+                if (body == null) { lastError = "Respon kosong dari server."; return@withContext null }
                 val o = JSONObject(body)
                 val dl = o.optString("downloadUrl")
-                if (dl.isBlank()) return@withContext null
+                if (dl.isBlank()) {
+                    val reason = o.optString("reason").ifBlank { o.optString("error") }
+                    lastError = if (reason.isNotBlank()) "Server: " + reason else "Server tidak mengembalikan downloadUrl."
+                    return@withContext null
+                }
                 RemakeResult(dl, o.optInt("durationSec", 0))
             }
+        } catch (e: java.net.SocketTimeoutException) {
+            lastError = "Timeout: server masih memproses / koneksi putus sebelum selesai. Video panjang bisa perlu >30 menit."
+            null
+        } catch (e: java.io.InterruptedIOException) {
+            lastError = "Koneksi terputus saat menunggu hasil (timeout)."
+            null
         } catch (e: Exception) {
+            lastError = "Error: " + (e.message ?: "tidak diketahui")
             null
         }
     }
