@@ -113,7 +113,7 @@ fun StudioScreen(
             )
             StudioSubModeTabs(subMode, viewModel)
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                RemakeVoiceScreen()
+                RemakeVoiceScreen(title, hook, caption)
             }
         }
         return
